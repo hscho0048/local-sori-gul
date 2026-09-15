@@ -61,14 +61,23 @@ const Chooser = ({ open, job, onClose, startPolling, openNote }) => {
     setMic('');
   }, [open]);
 
-  // Focus the dialog on open; Escape closes it (accessibility basics from the brief).
+  // onClose is a fresh arrow function on every App render; reading it through a ref (instead of putting it
+  // in the deps array below) keeps this effect from re-running — and re-stealing focus into the dialog —
+  // on every unrelated App re-render (e.g. every 500ms poll tick) while the chooser is open.
+  const onCloseRef = React.useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // Focus the dialog once when it opens; Escape closes it (accessibility basics from the brief).
+  // ponytail: no focus trap (Tab can leave the dialog) and no focus-return to the "+ 새 받아쓰기" button on
+  // close. Fine for this single small modal; upgrade path is a small focus-trap util + remembering
+  // document.activeElement before open and restoring it in onClose.
   React.useEffect(() => {
     if (!open) return undefined;
     if (dialogRef.current) dialogRef.current.focus();
-    const onKeyDown = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKeyDown = (e) => { if (e.key === 'Escape') onCloseRef.current(); };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -86,7 +95,12 @@ const Chooser = ({ open, job, onClose, startPolling, openNote }) => {
   const goLive = () => {
     setErrorMsg('');
     setStep('mic');
-    window.SoriBridge.mics().then(setMics, (err) => { setMics([]); setErrorMsg(err.message || String(err)); });
+    window.SoriBridge.mics().then(
+      (list) => { setMics(list); setMic(list[0] ?? ''); }, // default to the first mic — with exactly one
+                                                             // option <select>'s onChange never fires, so
+                                                             // without this `mic` stays '' and /live 400s
+      (err) => { setMics([]); setErrorMsg(err.message || String(err)); },
+    );
   };
 
   const startRecording = () => {
@@ -154,9 +168,11 @@ const countOccurrences = (text, sub) => {
   }
 };
 
-const Editor = ({ noteId, job, onClose }) => {
+const Editor = ({ noteId, job, chooserOpen, onClose }) => {
   const [title, setTitle] = React.useState('');
   const [transcript, setTranscript] = React.useState('');
+  const [loaded, setLoaded] = React.useState(false); // false until note(id) has actually resolved once
+  const [loadError, setLoadError] = React.useState('');
   const [saveStatus, setSaveStatus] = React.useState('');
   const [findOpen, setFindOpen] = React.useState(false);
   const [needle, setNeedle] = React.useState('');
@@ -168,31 +184,45 @@ const Editor = ({ noteId, job, onClose }) => {
   const saveTimerRef = React.useRef(null);
   const findOpenRef = React.useRef(findOpen);
   findOpenRef.current = findOpen;
+  const chooserOpenRef = React.useRef(chooserOpen);
+  chooserOpenRef.current = chooserOpen;
 
   const jobRunningHere = job.state === 'running' && job.note_id === noteId;
   const jobRunningRef = React.useRef(jobRunningHere);
   jobRunningRef.current = jobRunningHere;
 
   const loadNote = React.useCallback(() => {
-    window.SoriBridge.note(noteId).then((n) => {
-      setTitle(n.title);
-      setTranscript(n.transcript || '');
-      savedRef.current = { title: n.title, transcript: n.transcript || '' };
-    });
+    window.SoriBridge.note(noteId).then(
+      (n) => {
+        setTitle(n.title);
+        setTranscript(n.transcript || '');
+        savedRef.current = { title: n.title, transcript: n.transcript || '' };
+        setLoaded(true);
+        setLoadError('');
+      },
+      (err) => setLoadError(err.message || String(err)),
+    );
   }, [noteId]);
 
   React.useEffect(() => { loadNote(); }, [loadNote]);
 
-  // Reload once this note's own job finishes — the server has already written the final transcript by
-  // the time state flips off 'running', so the editor just needs to catch up.
-  // ponytail: if the user edited the title while their own job was running (autosave is blocked below),
-  // this reload can stomp that unsaved edit. Rare (title edits mid-recording); upgrade path is diffing
-  // against savedRef before overwriting title specifically.
+  // Reload just the transcript once this note's own job finishes — the server has already written the
+  // final text by the time state flips off 'running'. Deliberately NOT reloading title here: title
+  // autosaves independently of the job (see flushSave), so re-fetching it too could stomp an edit made,
+  // or just saved, while the job was running (item 3 fix — title used to always lose that race).
   const prevRunningRef = React.useRef(jobRunningHere);
   React.useEffect(() => {
-    if (prevRunningRef.current && !jobRunningHere) loadNote();
+    if (prevRunningRef.current && !jobRunningHere) {
+      window.SoriBridge.note(noteId).then(
+        (n) => {
+          setTranscript(n.transcript || '');
+          savedRef.current = { ...savedRef.current, transcript: n.transcript || '' };
+        },
+        (err) => setLoadError(err.message || String(err)),
+      );
+    }
     prevRunningRef.current = jobRunningHere;
-  }, [jobRunningHere, loadNote]);
+  }, [jobRunningHere, noteId]);
 
   React.useEffect(() => {
     if (jobRunningHere && textareaRef.current) {
@@ -200,34 +230,45 @@ const Editor = ({ noteId, job, onClose }) => {
     }
   }, [jobRunningHere, job.text]);
 
+  // Only the transcript field is ever gated on the job — it's the job's own output, and the server writes
+  // it directly, so we must never PATCH over that. Title has no such owner and always autosaves, including
+  // while our job is running. On failure we deliberately do NOT touch savedRef, so the edit stays "pending"
+  // (the diff against savedRef is still there) and the next change or flush retries it.
   const flushSave = () => {
     if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
-    if (jobRunningRef.current) return Promise.resolve(); // never PATCH transcript while our job owns it
     const fields = {};
     if (title !== savedRef.current.title) fields.title = title;
-    if (transcript !== savedRef.current.transcript) fields.transcript = transcript;
+    if (!jobRunningRef.current && transcript !== savedRef.current.transcript) fields.transcript = transcript;
     if (Object.keys(fields).length === 0) return Promise.resolve();
     setSaveStatus('저장 중…');
     return window.SoriBridge.updateNote(noteId, fields).then(
-      () => { savedRef.current = { title, transcript }; setSaveStatus('저장됨'); },
-      () => { setSaveStatus(''); },
+      () => { savedRef.current = { ...savedRef.current, ...fields }; setSaveStatus('저장됨'); },
+      (err) => {
+        const msg = err.message || String(err);
+        setSaveStatus(`저장하지 못했습니다: ${msg}`);
+        throw err; // let callers (export, flush-on-close) know the save didn't actually land
+      },
     );
   };
   const flushRef = React.useRef(flushSave);
   flushRef.current = flushSave;
 
-  // Debounced autosave. Harmless no-op when title/transcript match savedRef (e.g. right after load).
+  // Debounced autosave. Harmless no-op when title/transcript match savedRef (e.g. right after load), and
+  // held off entirely until the note has actually loaded (so a slow/failed load can't let a stray edit
+  // autosave a blank transcript over the real one).
   React.useEffect(() => {
-    if (jobRunningHere) return undefined;
-    saveTimerRef.current = setTimeout(() => flushRef.current(), 800);
+    if (!loaded) return undefined;
+    saveTimerRef.current = setTimeout(() => flushRef.current().catch(() => {}), 800);
     return () => clearTimeout(saveTimerRef.current);
-  }, [title, transcript, jobRunningHere]);
+  }, [title, transcript, loaded]);
 
-  // Flush any pending edit when the editor closes/unmounts.
-  React.useEffect(() => () => flushRef.current(), []);
+  // Flush any pending edit when the editor closes/unmounts (covers both the explicit "← 목록" click below
+  // and the <Editor key={openNoteId}> remount App does when switching straight to a different note).
+  React.useEffect(() => () => { flushRef.current().catch(() => {}); }, []);
 
   React.useEffect(() => {
     const onKeyDown = (e) => {
+      if (chooserOpenRef.current) return; // the chooser dialog owns Escape/Ctrl+H while it's open
       if (e.ctrlKey && (e.key === 'h' || e.key === 'H')) {
         e.preventDefault();
         setFindOpen((v) => !v);
@@ -262,15 +303,28 @@ const Editor = ({ noteId, job, onClose }) => {
     return true;
   };
 
+  // Replaces ta's [start, end) with newText as a single, real undo step. execCommand('insertText') is the
+  // way Chromium puts a programmatic textarea edit onto its native undo stack (so Ctrl+Z reverts it in one
+  // go, as the find/replace messages promise); it also fires a trusted 'input' event itself, which is what
+  // syncs `transcript` state back through the textarea's onChange. setRangeText + a manually dispatched
+  // input event is kept only as a fallback for a WebView2 build where execCommand is unavailable/returns
+  // false — that path doesn't get real undo, but the edit still lands and autosave still picks it up.
+  const applyReplacement = (ta, start, end, newText) => {
+    ta.focus();
+    ta.setSelectionRange(start, end);
+    let ok = false;
+    try { ok = document.execCommand('insertText', false, newText); } catch (e) { ok = false; }
+    if (!ok) {
+      ta.setRangeText(newText, start, end, 'end');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  };
+
   const replaceOne = () => {
     const ta = textareaRef.current;
     if (!ta || !needle) return;
     const selected = ta.value.slice(ta.selectionStart, ta.selectionEnd);
-    if (selected === needle) {
-      ta.focus();
-      ta.setRangeText(replacement, ta.selectionStart, ta.selectionEnd, 'end');
-      ta.dispatchEvent(new Event('input', { bubbles: true }));
-    }
+    if (selected === needle) applyReplacement(ta, ta.selectionStart, ta.selectionEnd, replacement);
     findNext();
   };
 
@@ -281,34 +335,42 @@ const Editor = ({ noteId, job, onClose }) => {
     const count = countOccurrences(text, needle);
     if (count === 0) { setFindMsg('찾는 말이 없습니다.'); return; }
     const newText = text.split(needle).join(replacement);
-    ta.focus();
-    // setRangeText (not ta.value = ...) + a dispatched input event keeps this on WebView2's native undo
-    // stack, so Ctrl+Z after "모두 바꾸기" really does undo it; the input event also syncs React state.
-    ta.setRangeText(newText, 0, text.length, 'end');
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    applyReplacement(ta, 0, text.length, newText);
     setFindMsg(`${count}곳을 바꿨습니다. 되돌리려면 Ctrl+Z.`);
   };
 
   const exportTxt = () => {
     window.SoriBridge.pickSavePath(`${title}.txt`).then((path) => {
       if (!path) return;
-      flushSave().then(() => {
-        window.SoriBridge.exportNote(noteId, path).then(
-          () => setExportMsg('TXT로 저장했습니다.'),
-          (err) => setExportMsg(err.message || String(err)),
-        );
-      });
+      flushSave().then(
+        () => {
+          window.SoriBridge.exportNote(noteId, path).then(
+            () => setExportMsg('TXT로 저장했습니다.'),
+            (err) => setExportMsg(err.message || String(err)),
+          );
+        },
+        (err) => setExportMsg(`저장하지 못해 내보내지 못했습니다: ${err.message || String(err)}`),
+      );
     }, (err) => setExportMsg(err.message || String(err)));
   };
 
   return (
     <div className="editor">
       <div className="editor-header">
-        <button className="btn" onClick={() => { flushSave(); onClose(); }}>← 목록</button>
-        <input className="editor-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+        {/* ponytail: fires the flush PATCH without awaiting it before onClose()'s refresh() GET, so on a
+            slow save the list can briefly show the pre-edit title for one refresh cycle. Upgrade path:
+            await flushSave() before calling onClose() (needs onClose to be async-aware). */}
+        <button className="btn" onClick={() => { flushSave().catch(() => {}); onClose(); }}>← 목록</button>
+        <input
+          className="editor-title"
+          value={title}
+          disabled={!loaded}
+          onChange={(e) => setTitle(e.target.value)}
+        />
         <span className="save-status">{saveStatus}</span>
         <button className="btn" onClick={exportTxt}>TXT로 저장</button>
       </div>
+      {loadError && <div className="modal-error">노트를 불러오지 못했습니다: {loadError}</div>}
       {exportMsg && <div className="editor-note">{exportMsg}</div>}
       {jobRunningHere && (
         <div className="job-status">
@@ -346,7 +408,7 @@ const Editor = ({ noteId, job, onClose }) => {
         ref={textareaRef}
         className="editor-textarea"
         value={jobRunningHere ? job.text : transcript}
-        readOnly={jobRunningHere}
+        readOnly={jobRunningHere || !loaded}
         onChange={(e) => setTranscript(e.target.value)}
       />
     </div>
@@ -615,28 +677,55 @@ const App = () => {
     );
   }, []);
 
-  // Polls SoriBridge.job() every 500ms while a job is running, stopping itself once it settles. On the
-  // running -> done/error transition it refreshes the note list (the server already wrote the result)
-  // and, for error, surfaces the message in the same dismissible banner Task 5 built for refresh().
+  // Polls SoriBridge.job() while a job is running, stopping itself once it settles. Chained via setTimeout
+  // (schedule-the-next-tick-only-after-the-response-lands) rather than setInterval, so a slow response can
+  // never overlap the next request — a setInterval tick fires on the wall clock regardless of whether the
+  // previous fetch is still in flight, so a late 'running' reply arriving after a later tick's 'done' reply
+  // could win the race and freeze the UI showing 'running' forever.
+  // awaitingFirstRef covers the "job fails before the first tick" gap: startPolling() is called right after
+  // Chooser's transcribe()/startLive() succeeds, before React's `job` state has seen anything but the old
+  // (often 'idle') value. If the job is already done/errored by the very first tick, `prev.state ===
+  // 'running'` would be false and the done/error transition would be silently missed — awaitingFirstRef
+  // makes that first tick count as a transition unconditionally whenever it isn't itself 'running'.
   const pollTimerRef = React.useRef(null);
+  const pollingRef = React.useRef(false);
   const startPolling = () => {
-    if (pollTimerRef.current) return; // already polling
-    pollTimerRef.current = setInterval(() => {
-      window.SoriBridge.job().then((j) => {
-        setJob((prev) => {
-          if (prev.state === 'running' && j.state !== 'running') {
-            refresh();
-            if (j.state === 'error') setError(j.error || '작업이 실패했습니다.');
+    if (pollingRef.current) return; // already polling
+    pollingRef.current = true;
+    let awaitingFirst = true;
+    const tick = () => {
+      window.SoriBridge.job().then(
+        (j) => {
+          if (!pollingRef.current) return; // stopPolling() ran while this request was in flight
+          const first = awaitingFirst;
+          awaitingFirst = false;
+          setJob((prev) => {
+            if (j.state !== 'running' && (first || prev.state === 'running')) {
+              refresh();
+              if (j.state === 'error') setError(j.error || '작업이 실패했습니다.');
+            }
+            return j;
+          });
+          if (j.state === 'running') {
+            pollTimerRef.current = setTimeout(tick, 500);
+          } else {
+            pollingRef.current = false;
+            pollTimerRef.current = null;
           }
-          return j;
-        });
-        if (j.state !== 'running') {
-          clearInterval(pollTimerRef.current);
-          pollTimerRef.current = null;
-        }
-      }, () => {});
-    }, 500);
+        },
+        () => {
+          awaitingFirst = false;
+          if (pollingRef.current) pollTimerRef.current = setTimeout(tick, 500);
+        },
+      );
+    };
+    tick();
   };
+  // Stop polling on unmount so an in-flight request's response can't setState after the App is gone.
+  React.useEffect(() => () => {
+    pollingRef.current = false;
+    clearTimeout(pollTimerRef.current);
+  }, []);
 
   const openNote = (id) => setOpenNoteId(id);
 
@@ -754,7 +843,17 @@ const App = () => {
       <main className="main">
         {error && <div className="banner">{error}</div>}
         {openNoteId ? (
-          <Editor noteId={openNoteId} job={job} onClose={() => { setOpenNoteId(null); refresh(); }} />
+          // key={openNoteId}: remounts the editor when switching straight from one note to another (e.g.
+          // clicking a different row while one is already open), instead of updating in place — so the old
+          // note's local title/transcript state can never survive to be PATCHed onto the new note's id.
+          // The remount's unmount-cleanup effect flushes the old note's pending save first (see Editor).
+          <Editor
+            key={openNoteId}
+            noteId={openNoteId}
+            job={job}
+            chooserOpen={chooserOpen}
+            onClose={() => { setOpenNoteId(null); refresh(); }}
+          />
         ) : (
           <React.Fragment>
             <h1 className="heading">{heading}</h1>
