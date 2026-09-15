@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Sorigul",
+  "version": "0.1.0",
+  "identifier": "com.sorigul.app",
+  "build": {
+    "beforeDevCommand": { "script": "npm run build", "wait": true },
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [{ "title": "소리글", "width": 1280, "height": 820, "minWidth": 900, "minHeight": 600 }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*"
+    }
+  },
+  "bundle": { "active": true, "targets": "all", "icon": ["icons/icon.ico", "icons/icon.png"] }
+}
