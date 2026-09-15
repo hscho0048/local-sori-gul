@@ -1,0 +1,6 @@
+# Separate from the QNN 1.22 runtime required by the precompiled NPU model.
+onnxruntime==1.30.0
+onnxruntime-qnn==2.6.0
+onnx==1.22.0
+numpy==2.5.3
+transformers==4.57.6
