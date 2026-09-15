@@ -42,10 +42,361 @@ const compareNotes = (a, b, sort) => {
   return typeof av === 'string' ? av.localeCompare(bv, 'ko') * dir : (av - bv) * dir;
 };
 
-// Stubs — Task 6 replaces these definitions (Chooser modal, transcript Editor, live-recording pill).
-const Chooser = () => null;
-const Editor = () => null;
-const LivePill = () => null;
+const DEVICES = [['npu', 'NPU (Hexagon)'], ['gpu', 'GPU (Adreno)']];
+
+const Chooser = ({ open, job, onClose, startPolling, openNote }) => {
+  const [step, setStep] = React.useState('choose');
+  const [device, setDevice] = React.useState('npu');
+  const [mics, setMics] = React.useState(null); // null = not loaded yet
+  const [mic, setMic] = React.useState('');
+  const [errorMsg, setErrorMsg] = React.useState('');
+  const dialogRef = React.useRef(null);
+  const busy = job.state === 'running';
+
+  React.useEffect(() => {
+    if (!open) return;
+    setStep('choose');
+    setErrorMsg('');
+    setMics(null);
+    setMic('');
+  }, [open]);
+
+  // Focus the dialog on open; Escape closes it (accessibility basics from the brief).
+  React.useEffect(() => {
+    if (!open) return undefined;
+    if (dialogRef.current) dialogRef.current.focus();
+    const onKeyDown = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const pickFile = () => {
+    setErrorMsg('');
+    window.SoriBridge.pickAudio().then((path) => {
+      if (!path) return;
+      window.SoriBridge.transcribe(path, device).then(
+        ({ note_id }) => { onClose(); startPolling(); openNote(note_id); },
+        (err) => setErrorMsg(err.message || String(err)),
+      );
+    }, (err) => setErrorMsg(err.message || String(err)));
+  };
+
+  const goLive = () => {
+    setErrorMsg('');
+    setStep('mic');
+    window.SoriBridge.mics().then(setMics, (err) => { setMics([]); setErrorMsg(err.message || String(err)); });
+  };
+
+  const startRecording = () => {
+    setErrorMsg('');
+    window.SoriBridge.startLive(mic, device).then(
+      ({ note_id }) => { onClose(); startPolling(); openNote(note_id); },
+      (err) => setErrorMsg(err.message || String(err)),
+    );
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="새 받아쓰기"
+        tabIndex={-1}
+        ref={dialogRef}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="modal-title">새 받아쓰기</h2>
+        <label className="modal-field">
+          <span>연산 장치</span>
+          <select value={device} onChange={(e) => setDevice(e.target.value)}>
+            {DEVICES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+          </select>
+        </label>
+        {step === 'choose' && (
+          <div className="modal-actions">
+            <button className="modal-choice" disabled={busy} onClick={pickFile}>오디오 전사…</button>
+            <button className="modal-choice" disabled={busy} onClick={goLive}>실시간 전사</button>
+          </div>
+        )}
+        {step === 'mic' && (
+          <div className="modal-mic">
+            {mics == null ? (
+              <div className="modal-hint">마이크 목록을 불러오는 중…</div>
+            ) : mics.length === 0 ? (
+              <div className="modal-hint">사용할 수 있는 마이크를 찾지 못했습니다. 마이크를 연결하고 Windows 개인 정보 설정에서 마이크 접근을 허용해 주세요.</div>
+            ) : (
+              <select value={mic} onChange={(e) => setMic(e.target.value)}>
+                {mics.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            )}
+            <p className="modal-hint">말이 끊길 때마다 바로 전사해 본문에 이어 붙입니다. ⏹ 녹음 마치기로 끝내면 녹음 파일도 보관됩니다.</p>
+            <button className="btn btn-primary" disabled={busy || !mics || mics.length === 0} onClick={startRecording}>녹음 시작</button>
+          </div>
+        )}
+        {errorMsg && <div className="modal-error">{errorMsg}</div>}
+      </div>
+    </div>
+  );
+};
+
+const countOccurrences = (text, sub) => {
+  if (!sub) return 0;
+  let count = 0;
+  let idx = 0;
+  for (;;) {
+    idx = text.indexOf(sub, idx);
+    if (idx === -1) return count;
+    count += 1;
+    idx += sub.length;
+  }
+};
+
+const Editor = ({ noteId, job, onClose }) => {
+  const [title, setTitle] = React.useState('');
+  const [transcript, setTranscript] = React.useState('');
+  const [saveStatus, setSaveStatus] = React.useState('');
+  const [findOpen, setFindOpen] = React.useState(false);
+  const [needle, setNeedle] = React.useState('');
+  const [replacement, setReplacement] = React.useState('');
+  const [findMsg, setFindMsg] = React.useState('');
+  const [exportMsg, setExportMsg] = React.useState('');
+  const textareaRef = React.useRef(null);
+  const savedRef = React.useRef({ title: '', transcript: '' }); // last value persisted to the server
+  const saveTimerRef = React.useRef(null);
+  const findOpenRef = React.useRef(findOpen);
+  findOpenRef.current = findOpen;
+
+  const jobRunningHere = job.state === 'running' && job.note_id === noteId;
+  const jobRunningRef = React.useRef(jobRunningHere);
+  jobRunningRef.current = jobRunningHere;
+
+  const loadNote = React.useCallback(() => {
+    window.SoriBridge.note(noteId).then((n) => {
+      setTitle(n.title);
+      setTranscript(n.transcript || '');
+      savedRef.current = { title: n.title, transcript: n.transcript || '' };
+    });
+  }, [noteId]);
+
+  React.useEffect(() => { loadNote(); }, [loadNote]);
+
+  // Reload once this note's own job finishes — the server has already written the final transcript by
+  // the time state flips off 'running', so the editor just needs to catch up.
+  // ponytail: if the user edited the title while their own job was running (autosave is blocked below),
+  // this reload can stomp that unsaved edit. Rare (title edits mid-recording); upgrade path is diffing
+  // against savedRef before overwriting title specifically.
+  const prevRunningRef = React.useRef(jobRunningHere);
+  React.useEffect(() => {
+    if (prevRunningRef.current && !jobRunningHere) loadNote();
+    prevRunningRef.current = jobRunningHere;
+  }, [jobRunningHere, loadNote]);
+
+  React.useEffect(() => {
+    if (jobRunningHere && textareaRef.current) {
+      textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
+    }
+  }, [jobRunningHere, job.text]);
+
+  const flushSave = () => {
+    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+    if (jobRunningRef.current) return Promise.resolve(); // never PATCH transcript while our job owns it
+    const fields = {};
+    if (title !== savedRef.current.title) fields.title = title;
+    if (transcript !== savedRef.current.transcript) fields.transcript = transcript;
+    if (Object.keys(fields).length === 0) return Promise.resolve();
+    setSaveStatus('저장 중…');
+    return window.SoriBridge.updateNote(noteId, fields).then(
+      () => { savedRef.current = { title, transcript }; setSaveStatus('저장됨'); },
+      () => { setSaveStatus(''); },
+    );
+  };
+  const flushRef = React.useRef(flushSave);
+  flushRef.current = flushSave;
+
+  // Debounced autosave. Harmless no-op when title/transcript match savedRef (e.g. right after load).
+  React.useEffect(() => {
+    if (jobRunningHere) return undefined;
+    saveTimerRef.current = setTimeout(() => flushRef.current(), 800);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [title, transcript, jobRunningHere]);
+
+  // Flush any pending edit when the editor closes/unmounts.
+  React.useEffect(() => () => flushRef.current(), []);
+
+  React.useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.ctrlKey && (e.key === 'h' || e.key === 'H')) {
+        e.preventDefault();
+        setFindOpen((v) => !v);
+      } else if (e.key === 'Escape' && findOpenRef.current) {
+        setFindOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  React.useEffect(() => {
+    if (!findOpen) return;
+    setFindMsg('');
+    const ta = textareaRef.current;
+    if (ta) {
+      const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+      if (sel) setNeedle(sel);
+    }
+  }, [findOpen]);
+
+  const findNext = () => {
+    const ta = textareaRef.current;
+    if (!ta || !needle) { setFindMsg('찾는 말이 없습니다.'); return false; }
+    const text = ta.value;
+    let idx = text.indexOf(needle, ta.selectionEnd);
+    if (idx === -1) idx = text.indexOf(needle, 0);
+    if (idx === -1) { setFindMsg('찾는 말이 없습니다.'); return false; }
+    ta.focus();
+    ta.setSelectionRange(idx, idx + needle.length);
+    setFindMsg(`${countOccurrences(text, needle)}곳 있습니다.`);
+    return true;
+  };
+
+  const replaceOne = () => {
+    const ta = textareaRef.current;
+    if (!ta || !needle) return;
+    const selected = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+    if (selected === needle) {
+      ta.focus();
+      ta.setRangeText(replacement, ta.selectionStart, ta.selectionEnd, 'end');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    findNext();
+  };
+
+  const replaceAll = () => {
+    const ta = textareaRef.current;
+    if (!ta || !needle) return;
+    const text = ta.value;
+    const count = countOccurrences(text, needle);
+    if (count === 0) { setFindMsg('찾는 말이 없습니다.'); return; }
+    const newText = text.split(needle).join(replacement);
+    ta.focus();
+    // setRangeText (not ta.value = ...) + a dispatched input event keeps this on WebView2's native undo
+    // stack, so Ctrl+Z after "모두 바꾸기" really does undo it; the input event also syncs React state.
+    ta.setRangeText(newText, 0, text.length, 'end');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    setFindMsg(`${count}곳을 바꿨습니다. 되돌리려면 Ctrl+Z.`);
+  };
+
+  const exportTxt = () => {
+    window.SoriBridge.pickSavePath(`${title}.txt`).then((path) => {
+      if (!path) return;
+      flushSave().then(() => {
+        window.SoriBridge.exportNote(noteId, path).then(
+          () => setExportMsg('TXT로 저장했습니다.'),
+          (err) => setExportMsg(err.message || String(err)),
+        );
+      });
+    }, (err) => setExportMsg(err.message || String(err)));
+  };
+
+  return (
+    <div className="editor">
+      <div className="editor-header">
+        <button className="btn" onClick={() => { flushSave(); onClose(); }}>← 목록</button>
+        <input className="editor-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+        <span className="save-status">{saveStatus}</span>
+        <button className="btn" onClick={exportTxt}>TXT로 저장</button>
+      </div>
+      {exportMsg && <div className="editor-note">{exportMsg}</div>}
+      {jobRunningHere && (
+        <div className="job-status">
+          {job.stage}{job.op === 'transcribe' ? ` · ${job.percent.toFixed(1)}%` : ''}
+        </div>
+      )}
+      {findOpen && (
+        <div className="find-panel">
+          {jobRunningHere ? (
+            <span className="modal-hint">전사 중에는 바꿀 수 없습니다.</span>
+          ) : (
+            <React.Fragment>
+              <input
+                className="find-input"
+                placeholder="찾을 말"
+                value={needle}
+                onChange={(e) => setNeedle(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') findNext(); }}
+              />
+              <input
+                className="find-input"
+                placeholder="바꿀 말"
+                value={replacement}
+                onChange={(e) => setReplacement(e.target.value)}
+              />
+              <button className="btn" onClick={findNext}>다음 찾기</button>
+              <button className="btn" onClick={replaceOne}>바꾸기</button>
+              <button className="btn" onClick={replaceAll}>모두 바꾸기</button>
+              {findMsg && <span className="find-msg">{findMsg}</span>}
+            </React.Fragment>
+          )}
+        </div>
+      )}
+      <textarea
+        ref={textareaRef}
+        className="editor-textarea"
+        value={jobRunningHere ? job.text : transcript}
+        readOnly={jobRunningHere}
+        onChange={(e) => setTranscript(e.target.value)}
+      />
+    </div>
+  );
+};
+
+const LivePill = ({ job }) => {
+  const isLive = job.state === 'running' && job.op === 'listen';
+  const startRef = React.useRef(null);
+  const [stopping, setStopping] = React.useState(false);
+  const [, setTick] = React.useState(0);
+
+  React.useEffect(() => {
+    if (isLive) {
+      if (startRef.current == null) startRef.current = Date.now(); // first poll that saw it running
+    } else {
+      startRef.current = null;
+      setStopping(false);
+    }
+  }, [isLive]);
+
+  React.useEffect(() => {
+    if (!isLive) return undefined;
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [isLive]);
+
+  if (!isLive) return null;
+
+  const elapsed = startRef.current ? Math.floor((Date.now() - startRef.current) / 1000) : 0;
+  const m = Math.floor(elapsed / 60);
+  const s = elapsed % 60;
+  const onStop = () => {
+    setStopping(true);
+    window.SoriBridge.stopLive().catch(() => setStopping(false));
+  };
+
+  return (
+    <div className="live-pill">
+      <span className="live-dot" aria-hidden="true" />
+      <span className="live-time">{m}:{String(s).padStart(2, '0')}</span>
+      <span className="live-stage">{job.stage}</span>
+      {stopping ? (
+        <span className="live-stopping">마지막 구간 전사 중…</span>
+      ) : (
+        <button className="live-stop" onClick={onStop}>⏹ 녹음 마치기</button>
+      )}
+    </div>
+  );
+};
 
 const TopBar = ({ query, setQuery, folders, folderFilter, setFolderFilter, onNewNote }) => {
   const [filterOpen, setFilterOpen] = React.useState(false);
@@ -264,8 +615,28 @@ const App = () => {
     );
   }, []);
 
-  // ponytail: one-shot job fetch, not the 500ms interval loop — Task 6 wires real polling + stop-on-idle.
-  const startPolling = () => { window.SoriBridge.job().then(setJob, () => {}); };
+  // Polls SoriBridge.job() every 500ms while a job is running, stopping itself once it settles. On the
+  // running -> done/error transition it refreshes the note list (the server already wrote the result)
+  // and, for error, surfaces the message in the same dismissible banner Task 5 built for refresh().
+  const pollTimerRef = React.useRef(null);
+  const startPolling = () => {
+    if (pollTimerRef.current) return; // already polling
+    pollTimerRef.current = setInterval(() => {
+      window.SoriBridge.job().then((j) => {
+        setJob((prev) => {
+          if (prev.state === 'running' && j.state !== 'running') {
+            refresh();
+            if (j.state === 'error') setError(j.error || '작업이 실패했습니다.');
+          }
+          return j;
+        });
+        if (j.state !== 'running') {
+          clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+        }
+      }, () => {});
+    }, 500);
+  };
 
   const openNote = (id) => setOpenNoteId(id);
 
@@ -290,7 +661,14 @@ const App = () => {
     const timer = setTimeout(refresh, 250);
     return () => clearTimeout(timer);
   }, [view, query]);
-  React.useEffect(() => { startPolling(); }, []);
+  // Seed job state once on mount; if the app was relaunched mid-job, that state is 'running' and we
+  // start the interval so the LivePill/Editor pick it right back up.
+  React.useEffect(() => {
+    window.SoriBridge.job().then((j) => {
+      setJob(j);
+      if (j.state === 'running') startPolling();
+    }, () => {});
+  }, []);
 
   const visible = React.useMemo(() => {
     const filtered = folderFilter == null ? notes : notes.filter((n) => n.folder_id === folderFilter);
