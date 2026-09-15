@@ -149,7 +149,7 @@ const Row = ({ note, selected, onToggleSelect, onOpen, job }) => {
         </div>
         {note.keywords && note.keywords.length > 0 && (
           <div className="keywords">
-            {note.keywords.map((k) => <span key={k} className="chip">{k}</span>)}
+            {note.keywords.map((k, i) => <span key={`${k}-${i}`} className="chip">{k}</span>)}
           </div>
         )}
       </td>
@@ -191,7 +191,7 @@ const Table = ({ notes, view, sort, onSort, selection, onToggleSelect, onToggleS
   );
 };
 
-const ActionBar = ({ count, view, folders, allStarred, onToggleStar, onMoveFolder, onTrash, onRestore, onDeleteForever, onClear }) => (
+const ActionBar = ({ count, view, folders, onToggleStar, onMoveFolder, onTrash, onRestore, onDeleteForever, onClear }) => (
   <div className="action-bar">
     <span>{count}개 선택</span>
     {view === 'trash' ? (
@@ -201,9 +201,20 @@ const ActionBar = ({ count, view, folders, allStarred, onToggleStar, onMoveFolde
       </React.Fragment>
     ) : (
       <React.Fragment>
-        <button className="btn" onClick={onToggleStar}>{allStarred ? '중요 해제' : '중요'}</button>
-        <select className="folder-select" aria-label="폴더 이동" defaultValue="" onChange={(e) => onMoveFolder(e.target.value)}>
-          <option value="">폴더 없음</option>
+        <button className="btn" onClick={onToggleStar}>중요</button>
+        <select
+          className="folder-select"
+          aria-label="폴더 이동"
+          defaultValue=""
+          onChange={(e) => {
+            const value = e.target.value;
+            if (value === '') return;
+            onMoveFolder(value === 'none' ? null : Number(value));
+            e.target.value = '';
+          }}
+        >
+          <option value="" disabled>폴더 이동</option>
+          <option value="none">폴더 없음</option>
           {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
         </select>
         <button className="btn" onClick={onTrash}>휴지통</button>
@@ -228,23 +239,57 @@ const App = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [error, setError] = React.useState('');
 
+  // refresh() always reads the CURRENT view/query (via refs, not closure) and tags each request with a
+  // sequence number, so a request started for a view/query that's no longer current can never overwrite
+  // fresher state — whether it's still in flight or was sitting in a debounce timer that fired late.
+  const viewRef = React.useRef(view);
+  const queryRef = React.useRef(query);
+  viewRef.current = view;
+  queryRef.current = query;
+  const requestSeq = React.useRef(0);
+
   const refresh = React.useCallback(() => {
-    Promise.all([window.SoriBridge.notes(view, query), window.SoriBridge.folders(), window.SoriBridge.notes('live')]).then(
-      ([n, f, live]) => { setNotes(n); setFolders(f); setLiveCount(live.length); setError(''); },
-      (err) => setError(err.message || String(err)),
+    const seq = ++requestSeq.current;
+    const v = viewRef.current;
+    const q = queryRef.current;
+    Promise.all([window.SoriBridge.notes(v, q), window.SoriBridge.folders(), window.SoriBridge.notes('live')]).then(
+      ([n, f, live]) => {
+        if (seq !== requestSeq.current) return;
+        setNotes(n); setFolders(f); setLiveCount(live.length); setError('');
+      },
+      (err) => {
+        if (seq !== requestSeq.current) return;
+        setError(err.message || String(err));
+      },
     );
-  }, [view, query]);
+  }, []);
 
   // ponytail: one-shot job fetch, not the 500ms interval loop — Task 6 wires real polling + stop-on-idle.
   const startPolling = () => { window.SoriBridge.job().then(setJob, () => {}); };
 
   const openNote = (id) => setOpenNoteId(id);
 
-  React.useEffect(() => { refresh(); setSelection(new Set()); }, [view]);
+  // One effect for both: view changes refresh immediately (and clear selection); a query-only change
+  // debounces. Because both live in one effect keyed on [view, query], a view change while a debounce
+  // timer is pending re-runs the effect, which cancels that timer via the cleanup below before it can fire.
+  const mountedRef = React.useRef(false);
+  const prevViewRef = React.useRef(view);
   React.useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      prevViewRef.current = view;
+      refresh();
+      return undefined;
+    }
+    if (prevViewRef.current !== view) {
+      prevViewRef.current = view;
+      setSelection(new Set());
+      refresh();
+      return undefined;
+    }
     const timer = setTimeout(refresh, 250);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [view, query]);
   React.useEffect(() => { startPolling(); }, []);
 
   const visible = React.useMemo(() => {
@@ -266,18 +311,24 @@ const App = () => {
   ));
 
   const selectedNotes = notes.filter((n) => selection.has(n.id));
+  // Policy: clear the selection and refresh() unconditionally, whether the bulk action fully succeeded,
+  // partially succeeded, or failed outright — refresh() shows whatever actually landed on the server, and
+  // any failure is surfaced in the error banner. (Chosen over "keep selection on total failure" for
+  // simplicity: partial success already makes "was anything selected still valid" ambiguous.)
   const runBulk = (fn) => {
     const ids = Array.from(selection);
-    Promise.all(ids.map(fn)).then(() => { setSelection(new Set()); refresh(); });
+    Promise.allSettled(ids.map(fn)).then((results) => {
+      setSelection(new Set());
+      refresh();
+      const failed = results.find((r) => r.status === 'rejected');
+      if (failed) setError(failed.reason.message || String(failed.reason));
+    });
   };
   const toggleStar = () => {
     const allStarred = selectedNotes.length > 0 && selectedNotes.every((n) => n.starred);
     runBulk((id) => window.SoriBridge.updateNote(id, { starred: !allStarred }));
   };
-  const moveToFolder = (value) => {
-    const folder_id = value === '' ? null : Number(value);
-    runBulk((id) => window.SoriBridge.updateNote(id, { folder_id }));
-  };
+  const moveToFolder = (folderId) => runBulk((id) => window.SoriBridge.updateNote(id, { folder_id: folderId }));
   const trashSelected = () => runBulk((id) => window.SoriBridge.updateNote(id, { trashed: true }));
   const restoreSelected = () => runBulk((id) => window.SoriBridge.updateNote(id, { trashed: false }));
   const deleteSelected = () => {
@@ -285,13 +336,13 @@ const App = () => {
     runBulk((id) => window.SoriBridge.deleteNote(id));
   };
 
-  const createFolder = (name) => window.SoriBridge.createFolder(name).then(refresh);
+  const createFolder = (name) => window.SoriBridge.createFolder(name).then(refresh, (err) => setError(err.message || String(err)));
   const deleteFolderById = (id) => {
     if (!window.confirm('폴더를 삭제할까요? 받아쓰기는 남습니다.')) return;
-    window.SoriBridge.deleteFolder(id).then(() => {
-      if (view === `folder:${id}`) setView('all');
-      refresh();
-    });
+    window.SoriBridge.deleteFolder(id).then(
+      () => { if (view === `folder:${id}`) setView('all'); refresh(); },
+      (err) => setError(err.message || String(err)),
+    );
   };
 
   const findFolderName = (id) => {
@@ -334,7 +385,6 @@ const App = () => {
                 count={selection.size}
                 view={view}
                 folders={folders}
-                allStarred={selectedNotes.length > 0 && selectedNotes.every((n) => n.starred)}
                 onToggleStar={toggleStar}
                 onMoveFolder={moveToFolder}
                 onTrash={trashSelected}

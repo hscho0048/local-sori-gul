@@ -1,10 +1,20 @@
+@font-face { font-family: 'A2Z'; src: url('./A2Z/A2Z-1Thin.ttf') format('truetype'); font-weight: 100; font-style: normal; font-display: swap; }
+@font-face { font-family: 'A2Z'; src: url('./A2Z/A2Z-2ExtraLight.ttf') format('truetype'); font-weight: 200; font-style: normal; font-display: swap; }
+@font-face { font-family: 'A2Z'; src: url('./A2Z/A2Z-3Light.ttf') format('truetype'); font-weight: 300; font-style: normal; font-display: swap; }
+@font-face { font-family: 'A2Z'; src: url('./A2Z/A2Z-4Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'A2Z'; src: url('./A2Z/A2Z-5Medium.ttf') format('truetype'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'A2Z'; src: url('./A2Z/A2Z-6SemiBold.ttf') format('truetype'); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: 'A2Z'; src: url('./A2Z/A2Z-7Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'A2Z'; src: url('./A2Z/A2Z-8ExtraBold.ttf') format('truetype'); font-weight: 800; font-style: normal; font-display: swap; }
+@font-face { font-family: 'A2Z'; src: url('./A2Z/A2Z-9Black.ttf') format('truetype'); font-weight: 900; font-style: normal; font-display: swap; }
+
 :root {
   --bg: #F7F8FA; --surface: #FFFFFF; --sidebar: #F2F4F7; --hover: #EEF1F5; --selected: #E6EEFF;
   --border: #E4E7EC; --text-primary: #101828; --text-secondary: #475467; --text-tertiary: #98A2B3;
   --accent: #2563EB; --accent-soft: #E6EEFF; --danger: #EF4444; --live: #EF4444;
   --radius-sm: 8px; --radius-md: 14px; --radius-pill: 9999px;
   --shadow-float: 0 12px 40px rgba(16,24,40,0.18);
-  --font-ui: 'Malgun Gothic', system-ui, sans-serif;
+  --font-ui: 'A2Z', 'Malgun Gothic', system-ui, sans-serif;
   --t-fast: 120ms;
 }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text-primary); font: 14px/1.45 var(--font-ui); }
