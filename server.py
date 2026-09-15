@@ -22,12 +22,16 @@ from jobs import run_job
 from library import Library, keywords
 
 TOKEN = secrets.token_urlsafe(24)
-JOB = {"state": "idle"}
+JOB = {"state": "idle"}  # ponytail: read/written across threads with no lock, relying on GIL-atomic dict
+                          # reads and whole-dict swaps (start_job); add a lock around reads too if that
+                          # assumption ever breaks (e.g. multi-field consistency is needed).
 JOB_LOCK = threading.Lock()
 FINISH = threading.Event()  # ⏹ 녹음 마치기: stop recording, transcribe the tail, keep text and WAV
 CANCEL = threading.Event()  # set only on shutdown
 WORKER = None
 ROUTES = []
+finished = ""  # text of completed chunks only (updated on "text" events, not "preview"); what we save
+               # to the note on error/cancel/shutdown instead of the in-progress preview
 
 
 class HttpError(Exception):
@@ -73,12 +77,14 @@ def ensure_idle():
 
 
 def start_job(operation, payload, note_id):
-    global WORKER
+    global WORKER, JOB, finished
     with JOB_LOCK:
         ensure_idle()
         FINISH.clear()
-        JOB.clear()
-        JOB.update(state="running", op=operation, note_id=note_id, stage="준비 중", text="", percent=0, error=None)
+        finished = ""
+        JOB = {"state": "running", "op": operation, "note_id": note_id, "stage": "준비 중",
+               "text": "", "percent": 0, "error": None}  # new dict, not JOB.clear()+update(), so a
+               # concurrent GET /job (reading the JOB global with no lock) never observes {}
     WORKER = threading.Thread(target=run, args=(operation, payload, note_id), daemon=True)
     WORKER.start()
 
@@ -88,6 +94,7 @@ def run(operation, payload, note_id):
 
     def emit(kind, value):
         nonlocal duration
+        global finished
         if kind == "stage":
             JOB["stage"] = value
         elif kind == "duration":
@@ -95,21 +102,35 @@ def run(operation, payload, note_id):
         elif kind == "progress":
             JOB["percent"] = value[0]
         elif kind == "text":
+            finished = value
             JOB["text"] = value
         elif kind == "preview":
             JOB["text"] = value[0]
         elif kind == "done":
-            with closing(Library()) as library:
-                note = library.get(note_id)
-                if operation == "listen" and note and note["audio"]:
-                    with wave.open(str(library.audio_path(note)), "rb") as recording:
-                        duration = recording.getnframes() / recording.getframerate()
-                library.update(note_id, transcript=value, **({} if duration is None else {"duration": duration}))
-            JOB.update(state="done", text=value, percent=100)
-        elif kind in ("error", "cancelled"):
-            if JOB.get("text"):  # keep what was transcribed so far, as the Tk app did
+            write_error = None
+            try:
                 with closing(Library()) as library:
-                    library.update(note_id, transcript=JOB["text"])
+                    note = library.get(note_id)
+                    if operation == "listen" and note and note["audio"]:
+                        with wave.open(str(library.audio_path(note)), "rb") as recording:
+                            duration = recording.getnframes() / recording.getframerate()
+                    library.update(note_id, transcript=value,
+                                   **({} if duration is None else {"duration": duration}))
+            except Exception as error:
+                write_error = str(error)
+            # JOB state must land on "done" or "error" even if the write above raised, so the job
+            # slot never stays stuck on "running" (fix 3): no bare DB write before the JOB.update.
+            if write_error is None:
+                JOB.update(state="done", text=value, percent=100)
+            else:
+                JOB.update(state="error", error=write_error)
+        elif kind in ("error", "cancelled"):
+            try:
+                if finished:  # keep what was transcribed so far, as the Tk app did
+                    with closing(Library()) as library:
+                        library.update(note_id, transcript=finished)
+            except Exception:
+                pass  # keep the original error/cancel reason; the job slot still frees up below
             JOB.update(state="error", error=str(value or "취소됐습니다."))
 
     try:
@@ -182,9 +203,11 @@ def transcribe(library, body, query):
     path = Path(body.get("path") or "")
     if not path.is_file() or path.suffix.lower() not in EXTENSIONS:
         raise HttpError(400, "지원하는 로컬 오디오 파일을 선택해 주세요.")
+    selected = device(body)  # validate before library.create, as /live does, so a bad device doesn't
+                              # leave an orphan note + copied audio behind
     ensure_idle()
     note_id = library.create(path.stem, "audio", audio=path)
-    start_job("transcribe", {"path": str(library.audio_path(library.get(note_id))), "device": device(body),
+    start_job("transcribe", {"path": str(library.audio_path(library.get(note_id))), "device": selected,
                              "speakers": True}, note_id)
     return {"note_id": note_id}
 
@@ -236,6 +259,8 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(length)) if length else {}
             query = {key: values[0] for key, values in parse_qs(url.query).items()}
+            # ponytail: a fresh sqlite connection per request, including every 500 ms /job poll — fine
+            # for one local user; switch to one shared connection + lock if polling cost ever shows up
             with closing(Library()) as library:
                 status, result = 200, function(library, body, query, *match.groups())
         except HttpError as error:
@@ -263,10 +288,20 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print("PORT", server.server_address[1], TOKEN, flush=True)  # pythonw stdout is a block-buffered pipe
     sys.stdin.buffer.read()  # blocks until Tauri closes the pipe (window closed, app exited or crashed)
-    CANCEL.set()  # run_job stops the worker, terminating it after 8 s, so .model.lock is released
+    if JOB.get("state") == "running" and finished:
+        # a window close during a job must not lose the transcript: save what's finished so far before
+        # asking the worker to stop, since it may not exit in time to reach its own "text"/"done" write
+        try:
+            with closing(Library()) as library:
+                library.update(JOB["note_id"], transcript=finished)
+        except Exception:
+            pass  # best-effort — the process is exiting either way
+    CANCEL.set()  # the worker only notices CANCEL between chunks; Tauri kills the process tree ~3 s
+                  # after closing stdin regardless, so the join below is best-effort, not a guarantee
     if WORKER:
         WORKER.join(15)
-    os._exit(0)  # multiprocessing's atexit would otherwise join a still-running worker
+    os._exit(0)  # ponytail: skips interpreter cleanup (atexit/gc) — needed because multiprocessing's
+                 # atexit would otherwise try to join a still-running worker; fine, process is exiting
 
 
 if __name__ == "__main__":
