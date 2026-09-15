@@ -168,7 +168,7 @@ const countOccurrences = (text, sub) => {
   }
 };
 
-const Editor = ({ noteId, job, chooserOpen, onClose }) => {
+const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
   const [title, setTitle] = React.useState('');
   const [transcript, setTranscript] = React.useState('');
   const [loaded, setLoaded] = React.useState(false); // false until note(id) has actually resolved once
@@ -277,8 +277,12 @@ const Editor = ({ noteId, job, chooserOpen, onClose }) => {
   }, [title, transcript, loaded]);
 
   // Flush any pending edit when the editor closes/unmounts (covers both the explicit "← 목록" click below
-  // and the <Editor key={openNoteId}> remount App does when switching straight to a different note).
-  React.useEffect(() => () => { flushRef.current().catch(() => {}); }, []);
+  // and the <Editor key={openNoteId}> remount App does when switching straight to a different note). A
+  // failure here can't show a local banner — the editor is already gone by the time it lands — so it goes
+  // to the App-level banner via onSaveError instead of being swallowed.
+  React.useEffect(() => () => {
+    flushRef.current().catch((err) => onSaveError(`저장하지 못했습니다: ${err.message || String(err)}`));
+  }, []);
 
   React.useEffect(() => {
     const onKeyDown = (e) => {
@@ -374,7 +378,7 @@ const Editor = ({ noteId, job, chooserOpen, onClose }) => {
         {/* ponytail: fires the flush PATCH without awaiting it before onClose()'s refresh() GET, so on a
             slow save the list can briefly show the pre-edit title for one refresh cycle. Upgrade path:
             await flushSave() before calling onClose() (needs onClose to be async-aware). */}
-        <button className="btn" onClick={() => { flushSave().catch(() => {}); onClose(); }}>← 목록</button>
+        <button className="btn" onClick={() => { flushSave().catch((err) => onSaveError(`저장하지 못했습니다: ${err.message || String(err)}`)); onClose(); }}>← 목록</button>
         <input
           className="editor-title"
           value={title}
@@ -382,7 +386,7 @@ const Editor = ({ noteId, job, chooserOpen, onClose }) => {
           onChange={(e) => setTitle(e.target.value)}
         />
         <span className="save-status">{saveStatus}</span>
-        <button className="btn" onClick={exportTxt}>TXT로 저장</button>
+        <button className="btn" disabled={jobRunningHere} onClick={exportTxt}>TXT로 저장</button>
       </div>
       {loadError && <div className="modal-error">노트를 불러오지 못했습니다: {loadError}</div>}
       {exportMsg && <div className="editor-note">{exportMsg}</div>}
@@ -665,6 +669,13 @@ const App = () => {
   const [chooserOpen, setChooserOpen] = React.useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [error, setError] = React.useState('');
+  // Whether the CURRENT `error` was set by refresh() itself, vs. by someone else (job-error poll, runBulk,
+  // folder actions, save-on-close). refresh() runs constantly (search typing, closing the editor, ...) and
+  // must never wipe out an error it didn't cause — so its own success path only clears the banner when it
+  // owns it. showError()/the banner's "×" mark ownership as "not refresh" / "none" respectively.
+  const errorFromRefresh = React.useRef(false);
+  const showError = (msg) => { errorFromRefresh.current = false; setError(msg); };
+  const dismissError = () => { errorFromRefresh.current = false; setError(''); };
 
   // refresh() always reads the CURRENT view/query (via refs, not closure) and tags each request with a
   // sequence number, so a request started for a view/query that's no longer current can never overwrite
@@ -675,9 +686,6 @@ const App = () => {
   queryRef.current = query;
   const requestSeq = React.useRef(0);
 
-  // Returns the underlying promise (settling after its own setError call, success or failure) so callers
-  // that need to report an error of their own — e.g. the job-error poll handler below — can chain after
-  // refresh() instead of racing it: refresh()'s own setError('')/setError(msg) always runs before theirs.
   const refresh = React.useCallback(() => {
     const seq = ++requestSeq.current;
     const v = viewRef.current;
@@ -685,10 +693,12 @@ const App = () => {
     return Promise.all([window.SoriBridge.notes(v, q), window.SoriBridge.folders(), window.SoriBridge.notes('live')]).then(
       ([n, f, live]) => {
         if (seq !== requestSeq.current) return;
-        setNotes(n); setFolders(f); setLiveCount(live.length); setError('');
+        setNotes(n); setFolders(f); setLiveCount(live.length);
+        if (errorFromRefresh.current) { errorFromRefresh.current = false; setError(''); }
       },
       (err) => {
         if (seq !== requestSeq.current) return;
+        errorFromRefresh.current = true;
         setError(err.message || String(err));
       },
     );
@@ -718,15 +728,10 @@ const App = () => {
           awaitingFirst = false;
           setJob((prev) => {
             if (j.state !== 'running' && (first || prev.state === 'running')) {
-              const refreshed = refresh();
-              if (j.state === 'error') {
-                // Set the job-error message only after refresh() has finished its own setError('') /
-                // setError(msg) — refresh() resolves later than this setJob call, and its success path
-                // unconditionally clears the banner, so setting this message *now* would just get wiped
-                // out a moment later when refresh() lands. Chaining after it makes this the last write.
-                const msg = j.error || '작업이 실패했습니다.';
-                refreshed.then(() => setError(msg), () => setError(msg));
-              }
+              refresh();
+              // No need to chain after refresh() any more: refresh()'s success path only clears an error
+              // it set itself (see errorFromRefresh above), so this message survives regardless of order.
+              if (j.state === 'error') showError(j.error || '작업이 실패했습니다.');
             }
             return j;
           });
@@ -812,7 +817,7 @@ const App = () => {
       setSelection(new Set());
       refresh();
       const failed = results.find((r) => r.status === 'rejected');
-      if (failed) setError(failed.reason.message || String(failed.reason));
+      if (failed) showError(failed.reason.message || String(failed.reason));
     });
   };
   const toggleStar = () => {
@@ -827,12 +832,16 @@ const App = () => {
     runBulk((id) => window.SoriBridge.deleteNote(id));
   };
 
-  const createFolder = (name) => window.SoriBridge.createFolder(name).then(refresh, (err) => setError(err.message || String(err)));
+  const createFolder = (name) => window.SoriBridge.createFolder(name).then(refresh, (err) => showError(err.message || String(err)));
   const deleteFolderById = (id) => {
     if (!window.confirm('폴더를 삭제할까요? 받아쓰기는 남습니다.')) return;
     window.SoriBridge.deleteFolder(id).then(
-      () => { if (view === `folder:${id}`) setView('all'); refresh(); },
-      (err) => setError(err.message || String(err)),
+      () => {
+        if (view === `folder:${id}`) setView('all');
+        if (folderFilter === id) setFolderFilter(null); // the deleted folder can no longer filter the table
+        refresh();
+      },
+      (err) => showError(err.message || String(err)),
     );
   };
 
@@ -868,7 +877,7 @@ const App = () => {
         {error && (
           <div className="banner">
             <span>{error}</span>
-            <button className="banner-close" aria-label="닫기" onClick={() => setError('')}>×</button>
+            <button className="banner-close" aria-label="닫기" onClick={dismissError}>×</button>
           </div>
         )}
         {openNoteId ? (
@@ -882,6 +891,7 @@ const App = () => {
             job={job}
             chooserOpen={chooserOpen}
             onClose={() => { setOpenNoteId(null); refresh(); }}
+            onSaveError={showError}
           />
         ) : (
           <React.Fragment>

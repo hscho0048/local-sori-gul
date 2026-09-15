@@ -112,10 +112,18 @@ def run(operation, payload, note_id):
                 with closing(Library()) as library:
                     note = library.get(note_id)
                     if operation == "listen" and note and note["audio"]:
-                        with wave.open(str(library.audio_path(note)), "rb") as recording:
-                            duration = recording.getnframes() / recording.getframerate()
-                    library.update(note_id, transcript=value,
-                                   **({} if duration is None else {"duration": duration}))
+                        try:
+                            with wave.open(str(library.audio_path(note)), "rb") as recording:
+                                duration = recording.getnframes() / recording.getframerate()
+                        except Exception:
+                            duration = None
+                    try:
+                        library.update(note_id, transcript=value,
+                                       **({} if duration is None else {"duration": duration}))
+                    except Exception:
+                        # duration write failed (or the wav read above did) — the transcript itself must
+                        # not be lost over a duration problem, so retry once without it.
+                        library.update(note_id, transcript=value)
             except Exception as error:
                 write_error = str(error)
             # JOB state must land on "done" or "error" even if the write above raised, so the job
@@ -296,8 +304,10 @@ def main():
                 library.update(JOB["note_id"], transcript=finished)
         except Exception:
             pass  # best-effort — the process is exiting either way
-    CANCEL.set()  # the worker only notices CANCEL between chunks; Tauri kills the process tree ~3 s
-                  # after closing stdin regardless, so the join below is best-effort, not a guarantee
+    CANCEL.set()  # the worker only notices CANCEL between chunks. Tauri's stop_bridge only kills the venv
+                  # launcher process (Child::kill) — this base interpreter survives that, long enough to see
+                  # stdin EOF, save the finished text above and join the worker below; the join is still
+                  # best-effort, not a guarantee, since the worker may not notice CANCEL in time.
     if WORKER:
         WORKER.join(15)
     os._exit(0)  # ponytail: skips interpreter cleanup (atexit/gc) — needed because multiprocessing's
