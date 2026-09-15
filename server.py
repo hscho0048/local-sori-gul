@@ -304,12 +304,14 @@ def main():
                 library.update(JOB["note_id"], transcript=finished)
         except Exception:
             pass  # best-effort — the process is exiting either way
-    CANCEL.set()  # the worker only notices CANCEL between chunks. Tauri's stop_bridge only kills the venv
-                  # launcher process (Child::kill) — this base interpreter survives that, long enough to see
-                  # stdin EOF, save the finished text above and join the worker below; the join is still
-                  # best-effort, not a guarantee, since the worker may not notice CANCEL in time.
+    if JOB.get("state") == "running" and JOB.get("op") == "listen":
+        FINISH.set()  # same as ⏹ 녹음 마치기: the tail is transcribed and jobs.py attaches the WAV to the note
+    else:
+        CANCEL.set()  # other jobs are discarded; the worker notices CANCEL between chunks
     if WORKER:
-        WORKER.join(15)
+        # ponytail: 30 s covers the tail segment (<= 20 s of audio) plus worker exit on NPU; a longer wait (or a
+        # "finishing…" notice) is needed if GPU first-compile ever lands inside a shutdown.
+        WORKER.join(30)
     os._exit(0)  # ponytail: skips interpreter cleanup (atexit/gc) — needed because multiprocessing's
                  # atexit would otherwise try to join a still-running worker; fine, process is exiting
 

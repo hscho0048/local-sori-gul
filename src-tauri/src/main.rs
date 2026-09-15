@@ -38,11 +38,12 @@ fn spawn_bridge() -> Bridge {
     Bridge { url: format!("http://127.0.0.1:{}", parts[1]), token: parts[2].to_string(), child: Mutex::new(Some(child)) }
 }
 
-/// Closing stdin lets server.py cancel a running job (releasing .model.lock); kill it if that takes too long.
+/// Closing stdin lets server.py finish a live recording (text + WAV) or cancel another job, releasing
+/// .model.lock; kill it only if that takes longer than server.py's own 30 s wait.
 fn stop_bridge(state: &Bridge) {
     let Some(mut child) = state.child.lock().unwrap().take() else { return };
     drop(child.stdin.take());
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + Duration::from_secs(35);
     while Instant::now() < deadline {
         if let Ok(Some(_)) = child.try_wait() {
             return;
@@ -60,6 +61,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![bridge])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { .. } = event {
+                // ponytail: the hidden window blocks the event loop while a recording finishes (<= 35 s);
+                // move stop_bridge to a thread + exit event if the app ever needs to stay responsive then.
+                let _ = window.hide();
                 stop_bridge(&window.state::<Bridge>());
             }
         })
