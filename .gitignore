@@ -1,0 +1,14 @@
+.venv/
+.venv-whisper-gpu/
+models/
+tools/
+diagnostics/
+library/
+__pycache__/
+*.part
+.model.lock
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+.superpowers/
