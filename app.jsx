@@ -173,6 +173,12 @@ const Editor = ({ noteId, job, chooserOpen, onClose }) => {
   const [transcript, setTranscript] = React.useState('');
   const [loaded, setLoaded] = React.useState(false); // false until note(id) has actually resolved once
   const [loadError, setLoadError] = React.useState('');
+  // True from the moment the post-job transcript reload starts until it succeeds. Kept true forever on
+  // failure (rather than unlocking back to the stale local `transcript`) — the point is that nobody may
+  // edit/autosave over the server's just-written final transcript until we've actually confirmed what it is.
+  const [reloadingTranscript, setReloadingTranscript] = React.useState(false);
+  const reloadingRef = React.useRef(reloadingTranscript);
+  reloadingRef.current = reloadingTranscript;
   const [saveStatus, setSaveStatus] = React.useState('');
   const [findOpen, setFindOpen] = React.useState(false);
   const [needle, setNeedle] = React.useState('');
@@ -210,15 +216,22 @@ const Editor = ({ noteId, job, chooserOpen, onClose }) => {
   // final text by the time state flips off 'running'. Deliberately NOT reloading title here: title
   // autosaves independently of the job (see flushSave), so re-fetching it too could stomp an edit made,
   // or just saved, while the job was running (item 3 fix — title used to always lose that race).
+  // reloadingTranscript keeps the textarea readOnly and the transcript field out of flushSave for the
+  // whole span between "job stopped" and "we actually know the real transcript" — jobRunningHere already
+  // flips to false the instant the job ends, and without this the textarea would briefly (or, on a failed
+  // reload, permanently) show as an editable, autosave-eligible field still holding the pre-job local
+  // `transcript` value, which could then get PATCHed over the server's real final text.
   const prevRunningRef = React.useRef(jobRunningHere);
   React.useEffect(() => {
     if (prevRunningRef.current && !jobRunningHere) {
+      setReloadingTranscript(true);
       window.SoriBridge.note(noteId).then(
         (n) => {
           setTranscript(n.transcript || '');
           savedRef.current = { ...savedRef.current, transcript: n.transcript || '' };
+          setReloadingTranscript(false);
         },
-        (err) => setLoadError(err.message || String(err)),
+        (err) => setLoadError(err.message || String(err)), // stays locked: reloadingTranscript is not cleared
       );
     }
     prevRunningRef.current = jobRunningHere;
@@ -238,7 +251,8 @@ const Editor = ({ noteId, job, chooserOpen, onClose }) => {
     if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
     const fields = {};
     if (title !== savedRef.current.title) fields.title = title;
-    if (!jobRunningRef.current && transcript !== savedRef.current.transcript) fields.transcript = transcript;
+    const transcriptLocked = jobRunningRef.current || reloadingRef.current;
+    if (!transcriptLocked && transcript !== savedRef.current.transcript) fields.transcript = transcript;
     if (Object.keys(fields).length === 0) return Promise.resolve();
     setSaveStatus('저장 중…');
     return window.SoriBridge.updateNote(noteId, fields).then(
@@ -408,7 +422,7 @@ const Editor = ({ noteId, job, chooserOpen, onClose }) => {
         ref={textareaRef}
         className="editor-textarea"
         value={jobRunningHere ? job.text : transcript}
-        readOnly={jobRunningHere || !loaded}
+        readOnly={jobRunningHere || !loaded || reloadingTranscript}
         onChange={(e) => setTranscript(e.target.value)}
       />
     </div>
@@ -661,11 +675,14 @@ const App = () => {
   queryRef.current = query;
   const requestSeq = React.useRef(0);
 
+  // Returns the underlying promise (settling after its own setError call, success or failure) so callers
+  // that need to report an error of their own — e.g. the job-error poll handler below — can chain after
+  // refresh() instead of racing it: refresh()'s own setError('')/setError(msg) always runs before theirs.
   const refresh = React.useCallback(() => {
     const seq = ++requestSeq.current;
     const v = viewRef.current;
     const q = queryRef.current;
-    Promise.all([window.SoriBridge.notes(v, q), window.SoriBridge.folders(), window.SoriBridge.notes('live')]).then(
+    return Promise.all([window.SoriBridge.notes(v, q), window.SoriBridge.folders(), window.SoriBridge.notes('live')]).then(
       ([n, f, live]) => {
         if (seq !== requestSeq.current) return;
         setNotes(n); setFolders(f); setLiveCount(live.length); setError('');
@@ -696,13 +713,20 @@ const App = () => {
     const tick = () => {
       window.SoriBridge.job().then(
         (j) => {
-          if (!pollingRef.current) return; // stopPolling() ran while this request was in flight
+          if (!pollingRef.current) return; // the loop was stopped (unmount cleanup below) while this request was in flight
           const first = awaitingFirst;
           awaitingFirst = false;
           setJob((prev) => {
             if (j.state !== 'running' && (first || prev.state === 'running')) {
-              refresh();
-              if (j.state === 'error') setError(j.error || '작업이 실패했습니다.');
+              const refreshed = refresh();
+              if (j.state === 'error') {
+                // Set the job-error message only after refresh() has finished its own setError('') /
+                // setError(msg) — refresh() resolves later than this setJob call, and its success path
+                // unconditionally clears the banner, so setting this message *now* would just get wiped
+                // out a moment later when refresh() lands. Chaining after it makes this the last write.
+                const msg = j.error || '작업이 실패했습니다.';
+                refreshed.then(() => setError(msg), () => setError(msg));
+              }
             }
             return j;
           });
@@ -841,7 +865,12 @@ const App = () => {
         setCollapsed={setSidebarCollapsed}
       />
       <main className="main">
-        {error && <div className="banner">{error}</div>}
+        {error && (
+          <div className="banner">
+            <span>{error}</span>
+            <button className="banner-close" aria-label="닫기" onClick={() => setError('')}>×</button>
+          </div>
+        )}
         {openNoteId ? (
           // key={openNoteId}: remounts the editor when switching straight from one note to another (e.g.
           // clicking a different row while one is already open), instead of updating in place — so the old
