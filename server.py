@@ -12,10 +12,10 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import platform
 import re
 import secrets
 import sys
+import sysconfig
 import tempfile
 import threading
 from urllib.parse import parse_qs, urlparse
@@ -27,6 +27,8 @@ from library import Library, keywords
 from setup_assets import ROOT, required_files
 
 TOKEN = secrets.token_urlsafe(24)
+# The interpreter's own architecture: an x64 build running under emulation on an ARM64 PC reports machine() == "ARM64".
+ARM64 = sysconfig.get_platform() == "win-arm64"
 JOB = {"state": "idle"}  # ponytail: read/written across threads with no lock, relying on GIL-atomic dict
                           # reads and whole-dict swaps (start_job); add a lock around reads too if that
                           # assumption ever breaks (e.g. multi-field consistency is needed).
@@ -34,7 +36,8 @@ JOB_LOCK = threading.Lock()
 FINISH = threading.Event()  # ⏹ 녹음 마치기: stop recording, transcribe the tail, keep text and WAV
 CANCEL = threading.Event()  # set only on shutdown: no new jobs after that
 JOB_CANCEL = threading.Event()  # the running job's own cancel (취소 or shutdown); replaced per job
-LABELS = {"npu": "NPU (Hexagon)", "gpu": "GPU (Adreno)", "intel": "인텔 GPU (OpenVINO)", "cpu": "CPU"}
+LABELS = {"npu": "NPU (Hexagon)", "gpu": "GPU (Adreno)", "intel-gpu": "인텔 GPU (OpenVINO)",
+          "intel-npu": "인텔 NPU (OpenVINO)", "cpu": "CPU"}
 WORKER = None
 ROUTES = []
 finished = ""  # text of completed chunks only (updated on "text" events, not "preview"); what we save
@@ -75,7 +78,7 @@ def save_text(path, text):
 def probe_devices():
     """Devices usable on this PC, probed once without loading a model or importing QNN on x64."""
     ids = []
-    if platform.machine() == "ARM64":
+    if ARM64:
         spec = importlib.util.find_spec("onnxruntime")
         if spec and (Path(spec.origin).parent / "capi" / "QnnHtp.dll").is_file():
             ids.append("npu")
@@ -84,11 +87,11 @@ def probe_devices():
             ids.append("gpu")
     else:
         try:
-            from engine import openvino_device
-            if openvino_device() in ("GPU", "NPU"):
-                ids.append("intel")
+            from engine import openvino_kinds
+            kinds = openvino_kinds()
         except Exception:
-            pass  # no OpenVINO runtime or no Intel device: CPU only
+            kinds = set()  # no OpenVINO runtime: CPU only
+        ids += [f"intel-{kind.lower()}" for kind in ("GPU", "NPU") if kind in kinds]
     return ids + ["cpu"]
 
 
@@ -282,10 +285,13 @@ def transcribe(library, body, query):
         raise HttpError(400, "지원하는 로컬 오디오 파일을 선택해 주세요.")
     selected = device(body)  # validate before library.create, as /live does, so a bad device doesn't
                               # leave an orphan note + copied audio behind
+    speakers = body.get("speakers", True)
+    if not isinstance(speakers, bool):
+        raise HttpError(400, "speakers must be true or false")
     ensure_idle()
     note_id = library.create(path.stem, "audio", audio=path)
     start_job("transcribe", {"path": str(library.audio_path(library.get(note_id))), "device": selected,
-                             "speakers": True}, note_id)
+                             "speakers": speakers}, note_id)
     return {"note_id": note_id}
 
 

@@ -2,19 +2,22 @@
 import multiprocessing as mp
 import os
 from pathlib import Path
-import platform
 import sys
+import sysconfig
 import time
 
 CODE = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("SORIGUL_HOME") or CODE)
 RESULT_KIND = {"transcribe": "done", "listen": "done", "setup": "done"}
 
+# The interpreter's own architecture: an x64 build running under emulation on an ARM64 PC reports machine() == "ARM64".
+ARM64 = sysconfig.get_platform() == "win-arm64"
+
 
 def worker_environment(operation, payload):
     gpu = operation in ("transcribe", "listen") and payload.get("device", "npu") == "gpu"
     # setup builds static-shape ONNX files, and only the GPU environment has `onnx` on ARM64
-    return ".venv-whisper-gpu" if gpu or (operation == "setup" and platform.machine() == "ARM64") else ".venv"
+    return ".venv-whisper-gpu" if gpu or (operation == "setup" and ARM64) else ".venv"
 
 
 def worker_python(operation, payload):

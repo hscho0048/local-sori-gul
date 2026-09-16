@@ -285,8 +285,8 @@ class WhisperNPU:
         as soon as it closes. `stop` ends the recording and transcribes the tail; `self.cancel` aborts. The whole
         recording is also written to wav_path so nothing is lost."""
         command = mic_command(source, ffmpeg) if isinstance(source, str) else source
-        label = source if isinstance(source, str) else "시스템 소리"
-        kind = "마이크" if isinstance(source, str) else "시스템 소리"
+        label = source if isinstance(source, str) else ("마이크 + 시스템 소리" if "--mic" in source else "시스템 소리")
+        kind = "마이크" if isinstance(source, str) else label
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         recording = wave.open(str(wav_path), "wb") if wav_path else None
@@ -468,46 +468,44 @@ class WhisperGPU(WhisperNPU):
         return self.tokenizer.decode(generated, skip_special_tokens=True).strip(), True
 
 
-def openvino_device(available=None):
-    """OpenVINO target for the encoder: GPU, else NPU, else CPU, as OpenVINO reports them ('GPU.0' counts as GPU)."""
+def openvino_kinds(available=None):
+    """Device kinds OpenVINO reports on this PC ('GPU.0' counts as GPU)."""
     if available is None:
         import openvino
         available = openvino.Core().available_devices
-    kinds = {name.split(".")[0] for name in available}
-    return next((kind for kind in ("GPU", "NPU") if kind in kinds), "CPU")
+    return {name.split(".")[0] for name in available}
 
 
 class WhisperCPU(WhisperGPU):
     """WhisperGPU's model files and infer() without QNN, for any x64 or arm64 PC: both sessions on the CPU ('cpu'),
-    or the encoder on Intel graphics through the OpenVINO execution provider ('intel')."""
+    or the encoder on Intel graphics / NPU through the OpenVINO execution provider ('intel-gpu' / 'intel-npu')."""
 
-    def __init__(self, emit, cancel, model_dir=None, profile=False, intel=False):
+    def __init__(self, emit, cancel, model_dir=None, profile=False, ov_device=None):
         self.emit, self.cancel = emit, cancel
         self.model_dir = Path(model_dir) if model_dir else ROOT / "models"
         encoder_file, decoder_file = self.model_files()
         encoder_providers, label = ["CPUExecutionProvider"], "CPU"
-        if intel:
+        if ov_device:
             import openvino
             # onnxruntime-openvino loads openvino.dll from PATH, which the pip package does not set up.
             libs = Path(openvino.__file__).parent / "libs"
             os.environ["PATH"] = f"{libs};{os.environ.get('PATH', '')}"
             self.dll_directory = os.add_dll_directory(str(libs)) if libs.is_dir() else None
-            target = openvino_device()
-            cache = ROOT / "models" / "openvino-cache"  # compiled encoder blob: only the first job compiles
+            cache = ROOT / "models" / "openvino-cache" / ov_device  # compiled encoder blob per device: only the first job compiles
             cache.mkdir(parents=True, exist_ok=True)
-            encoder_providers = [("OpenVINOExecutionProvider", {"device_type": target, "cache_dir": str(cache)}),
+            encoder_providers = [("OpenVINOExecutionProvider", {"device_type": ov_device, "cache_dir": str(cache)}),
                                  "CPUExecutionProvider"]
-            label = f"인텔 {target} (OpenVINO) · CPU (decoder)"
+            label = f"인텔 {ov_device} (OpenVINO) · CPU (decoder)"
         import onnxruntime as ort
         ort.disable_telemetry_events()
         check_cancel(cancel)
-        emit("stage", "encoder 모델을 불러오는 중… (처음은 수 분)" if intel else "encoder 모델을 불러오는 중…")
+        emit("stage", "encoder 모델을 불러오는 중… (처음은 수 분)" if ov_device else "encoder 모델을 불러오는 중…")
         # onnxruntime 1.24 (x64, via onnxruntime-openvino) cannot build this fp16 encoder with SimplifiedLayerNormFusion
         # ("Attempting to get index by a name which does not exist: InsertedPrecisionFreeCast_…"); skipping that one
         # fusion gives identical output.
         self.encoder = ort.InferenceSession(str(encoder_file), sess_options=ort.SessionOptions(), providers=encoder_providers,
                                             disabled_optimizers=["SimplifiedLayerNormFusion"])
-        if intel and "OpenVINOExecutionProvider" not in self.encoder.get_providers():
+        if ov_device and "OpenVINOExecutionProvider" not in self.encoder.get_providers():
             raise RuntimeError("OpenVINO 세션 생성에 실패했습니다. 인텔 그래픽 드라이버를 확인하거나 CPU를 선택해 주세요.")
         self.encoder_dtype = np.float16 if self.encoder.get_inputs()[0].type == "tensor(float16)" else np.float32
         check_cancel(cancel)
@@ -524,14 +522,16 @@ class WhisperCPU(WhisperGPU):
 
 def load_whisper(device, emit, cancel, **options):
     """'npu' = pre-compiled Hexagon bundle; 'gpu' = standard ONNX export on the Adreno GPU via QNN;
-    'cpu' / 'intel' = the same export on the CPU / Intel graphics (OpenVINO)."""
+    'cpu' = the same export on the CPU; 'intel-gpu' / 'intel-npu' = its encoder on Intel graphics / NPU (OpenVINO)."""
     if device == "gpu":
         return WhisperGPU(emit, cancel, **options)
     if device == "npu":
         return WhisperNPU(emit, cancel, **options)
-    if device in ("cpu", "intel"):
-        return WhisperCPU(emit, cancel, intel=device == "intel", **options)
-    raise ValueError("device must be 'npu', 'gpu', 'cpu' or 'intel'")
+    if device == "cpu":
+        return WhisperCPU(emit, cancel, **options)
+    if device in ("intel-gpu", "intel-npu"):
+        return WhisperCPU(emit, cancel, ov_device=device.split("-")[1].upper(), **options)
+    raise ValueError("device must be 'npu', 'gpu', 'cpu', 'intel-gpu' or 'intel-npu'")
 
 
 if __name__ == "__main__":
@@ -540,7 +540,7 @@ if __name__ == "__main__":
     parser.add_argument("audio", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--profile", action="store_true")
-    parser.add_argument("--device", choices=("npu", "gpu", "cpu", "intel"), default="npu")
+    parser.add_argument("--device", choices=("npu", "gpu", "cpu", "intel-gpu", "intel-npu"), default="npu")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Output already exists; choose a new filename.")

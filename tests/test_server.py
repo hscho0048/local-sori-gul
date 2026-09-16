@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 import server
 
+REAL_PROBE = server.probe_devices  # setUp replaces it with a mock
+
 
 class ServerTests(unittest.TestCase):
     def setUp(self):
@@ -146,6 +148,40 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(self.request("POST", "/setup", {})[0], 503)
         finally:
             server.CANCEL.clear()
+
+    def test_x64_devices_follow_what_openvino_reports(self):
+        import sys
+        from types import ModuleType, SimpleNamespace
+        cases = [(["CPU", "GPU.0"], ["intel-gpu", "cpu"]),
+                 (["CPU", "NPU"], ["intel-npu", "cpu"]),
+                 (["CPU", "GPU.0", "NPU"], ["intel-gpu", "intel-npu", "cpu"]),
+                 (["CPU"], ["cpu"])]
+        for available, expected in cases:
+            fake = ModuleType("openvino")
+            fake.Core = lambda devices=available: SimpleNamespace(available_devices=list(devices))
+            with self.subTest(available=available), patch("server.ARM64", False), \
+                    patch.dict(sys.modules, {"openvino": fake}):
+                self.assertEqual(REAL_PROBE.__wrapped__(), expected)
+        with patch("server.ARM64", False), patch.dict(sys.modules, {"openvino": None}):  # no OpenVINO runtime
+            self.assertEqual(REAL_PROBE.__wrapped__(), ["cpu"])
+        with patch("server.probe_devices", return_value=["intel-gpu", "intel-npu", "cpu"]), \
+                patch("server.models_ready", return_value=True):
+            status, body = self.request("GET", "/devices")
+        self.assertEqual(body["devices"], [{"id": "intel-gpu", "label": "인텔 GPU (OpenVINO)"},
+                                           {"id": "intel-npu", "label": "인텔 NPU (OpenVINO)"},
+                                           {"id": "cpu", "label": "CPU"}])
+
+    def test_transcribe_passes_the_speakers_choice(self):
+        self.assertEqual(self.request("POST", "/transcribe", {"path": self.audio(), "speakers": "yes"})[0], 400)
+        self.request("POST", "/transcribe", {"path": self.audio(), "speakers": False})
+        self.wait_for("running")
+        self.assertIs(self.calls[0][1]["speakers"], False)
+        self.release.set()
+        self.wait_for("done")
+        self.release.clear()
+        self.request("POST", "/transcribe", {"path": self.audio()})
+        self.wait_for("running")
+        self.assertIs(self.calls[1][1]["speakers"], True)
 
     def test_setup_progress_fields(self):
         emit = server.job_emitter("setup", None)

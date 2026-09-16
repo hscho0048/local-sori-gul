@@ -284,11 +284,11 @@ class LayoutTests(unittest.TestCase):
             (Path(code) / "python312._pth").write_text("")
             self.assertEqual(jobs.worker_python("listen", {"device": "gpu"}),
                              (Path(code) / "pythonw.exe", Path(code) / "Lib" / "gpu-packages"))
-            self.assertEqual(jobs.worker_python("transcribe", {"device": "intel"}),
+            self.assertEqual(jobs.worker_python("transcribe", {"device": "intel-gpu"}),
                              (Path(code) / "pythonw.exe", Path(code) / "Lib" / "site-packages"))
-            with patch("jobs.platform.machine", return_value="ARM64"):
+            with patch("jobs.ARM64", True):
                 self.assertEqual(jobs.worker_environment("setup", {}), ".venv-whisper-gpu")
-            with patch("jobs.platform.machine", return_value="AMD64"):
+            with patch("jobs.ARM64", False):
                 self.assertEqual(jobs.worker_environment("setup", {}), ".venv")
 
 
@@ -299,7 +299,7 @@ class DeviceTests(unittest.TestCase):
             (Path(folder) / name).parent.mkdir(parents=True, exist_ok=True)
             (Path(folder) / name).write_text("{}")
 
-    def load(self, intel, available=("CPU", "GPU.0")):
+    def load(self, ov_device=None, available=("CPU", "GPU.0")):
         """WhisperCPU with onnxruntime/openvino/tokenizers/transformers mocked; returns (worker, sessions created)."""
         import sys
         from types import ModuleType, SimpleNamespace
@@ -335,11 +335,11 @@ class DeviceTests(unittest.TestCase):
                 patch.dict(os.environ):
             self.fake_models(folder)
             worker = WhisperCPU(lambda kind, value: stages.append((kind, value)), threading.Event(),
-                                model_dir=folder, intel=intel)
+                                model_dir=folder, ov_device=ov_device)
         return worker, created, stages
 
     def test_cpu_device_runs_both_sessions_on_the_cpu_without_qnn(self):
-        worker, created, stages = self.load(intel=False)
+        worker, created, stages = self.load()
         self.assertEqual([s.providers for s in created], [["CPUExecutionProvider"], ["CPUExecutionProvider"]])
         # onnxruntime 1.24 (x64) fails to build this fp16 encoder with the fusion enabled
         self.assertEqual(created[0].disabled, ["SimplifiedLayerNormFusion"])
@@ -347,29 +347,59 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(worker.encoder_dtype, np.float32)
         self.assertIn(("ready", "CPU"), stages)
 
-    def test_intel_device_puts_the_encoder_on_openvino_gpu(self):
-        # ponytail: mocked session only — untested on Intel hardware.
-        worker, created, stages = self.load(intel=True)
+    def test_intel_gpu_puts_the_encoder_on_openvino_gpu_with_its_own_cache(self):
+        worker, created, stages = self.load(ov_device="GPU")
         self.assertEqual(created[0].providers,
                          [("OpenVINOExecutionProvider", {"device_type": "GPU",
-                                                        "cache_dir": str(ROOT / "models" / "openvino-cache")}),
+                                                        "cache_dir": str(ROOT / "models" / "openvino-cache" / "GPU")}),
                           "CPUExecutionProvider"])
         self.assertEqual(created[1].providers, ["CPUExecutionProvider"])
         self.assertIn(("ready", "인텔 GPU (OpenVINO) · CPU (decoder)"), stages)
 
-    def test_openvino_device_prefers_gpu_then_npu_then_cpu(self):
-        from engine import openvino_device
-        self.assertEqual(openvino_device(["CPU", "NPU", "GPU.1"]), "GPU")
-        self.assertEqual(openvino_device(["CPU", "NPU"]), "NPU")
-        self.assertEqual(openvino_device(["CPU"]), "CPU")
+    def test_intel_npu_puts_the_encoder_on_openvino_npu_with_its_own_cache(self):
+        # ponytail: mocked session only — the NPU path is untested on hardware.
+        worker, created, stages = self.load(ov_device="NPU", available=("CPU", "NPU"))
+        self.assertEqual(created[0].providers,
+                         [("OpenVINOExecutionProvider", {"device_type": "NPU",
+                                                        "cache_dir": str(ROOT / "models" / "openvino-cache" / "NPU")}),
+                          "CPUExecutionProvider"])
+        self.assertIn(("ready", "인텔 NPU (OpenVINO) · CPU (decoder)"), stages)
 
-    def test_load_whisper_routes_cpu_and_intel(self):
+    def test_openvino_kinds_strips_device_indexes(self):
+        from engine import openvino_kinds
+        self.assertEqual(openvino_kinds(["CPU", "NPU", "GPU.0", "GPU.1"]), {"CPU", "NPU", "GPU"})
+        self.assertEqual(openvino_kinds([]), set())
+
+    def test_load_whisper_routes_cpu_and_both_intel_devices(self):
         import engine
         with patch("engine.WhisperCPU", side_effect=lambda *a, **k: k):
-            self.assertEqual(engine.load_whisper("cpu", None, None), {"intel": False})
-            self.assertEqual(engine.load_whisper("intel", None, None), {"intel": True})
-        with self.assertRaises(ValueError):
-            engine.load_whisper("tpu", None, None)
+            self.assertEqual(engine.load_whisper("cpu", None, None), {})
+            self.assertEqual(engine.load_whisper("intel-gpu", None, None), {"ov_device": "GPU"})
+            self.assertEqual(engine.load_whisper("intel-npu", None, None), {"ov_device": "NPU"})
+        for gone in ("intel", "tpu"):
+            with self.assertRaises(ValueError):
+                engine.load_whisper(gone, None, None)
+
+    def test_mixed_source_is_labelled_as_mic_plus_system_sound(self):
+        import io
+        class Producer:
+            stdout, stderr, code = io.BytesIO(noise(3).tobytes()), io.BytesIO(b""), None
+            def poll(self):
+                return self.code
+            def terminate(self):
+                self.code = 0
+            kill = terminate
+            def wait(self):
+                return 0
+        worker = WhisperNPU.__new__(WhisperNPU)
+        worker.cancel, stop = threading.Event(), threading.Event()
+        stages = []
+        worker.emit = lambda kind, value: stages.append(value)
+        worker.infer = lambda audio, preview: ("말", False)
+        stop.set()
+        with patch("engine.subprocess.Popen", return_value=Producer()):
+            worker.listen(["py", "loopback.py", "--mic", "Mic"], stop)
+        self.assertIn("🎙 녹음 중 · 마이크 + 시스템 소리", stages)
 
     def test_listen_accepts_a_producer_command(self):
         import io
@@ -420,9 +450,9 @@ class SetupAssetTests(unittest.TestCase):
 
     def test_required_files_include_the_npu_bundle_only_on_arm64(self):
         import setup_assets
-        with patch("setup_assets.platform.machine", return_value="AMD64"):
+        with patch("setup_assets.ARM64", False):
             x64 = setup_assets.required_files()
-        with patch("setup_assets.platform.machine", return_value="ARM64"):
+        with patch("setup_assets.ARM64", True):
             arm = setup_assets.required_files()
         self.assertIn("whisper-gpu/encoder_static_fp16.onnx", x64)
         self.assertIn("speaker/speaker_static_198.onnx", x64)

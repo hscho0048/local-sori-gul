@@ -3,12 +3,16 @@ import hashlib
 import argparse
 import os
 from pathlib import Path
-import platform
+import sysconfig
 import urllib.request
 import zipfile
 
 CODE = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("SORIGUL_HOME") or CODE)
+
+# The interpreter's own architecture: an x64 build running under emulation on an ARM64 PC reports machine() == "ARM64".
+ARM64 = sysconfig.get_platform() == "win-arm64"
+
 MODEL_REV = "7fbb62e962d1bda945b81fbc3b048e5bb5773cf0"
 TOKENIZER_REV = "41f01f3fe87f28c78e2fbf8b568835947dd65ed9"
 BASE = f"https://huggingface.co/FluidInference/whisper-large-v3-turbo-qnn/resolve/{MODEL_REV}/snapdragon-x-elite"
@@ -53,7 +57,7 @@ def required_files():
     names = ["tokenizer.json", "generation_config.json", "preprocessor_config.json",
              f"speaker/speaker_static_{FRAMES}.onnx",
              "whisper-gpu/encoder_static_fp16.onnx", "whisper-gpu/decoder_model_merged_fp16.onnx"]
-    return (list(FILES) if platform.machine() == "ARM64" else []) + names
+    return (list(FILES) if ARM64 else []) + names
 
 
 def download(url, target, sha=None, emit=log):
@@ -122,7 +126,7 @@ def setup_whisper_gpu(emit=log):
 def main(emit=log, whisper_gpu=False):
     """Every model this machine needs, then (with whisper_gpu) the static-shape encoder. Files already present with
     the right checksum are skipped, so an interrupted first run resumes."""
-    if platform.machine() == "ARM64":
+    if ARM64:
         for name, sha in FILES.items():
             download(f"{BASE}/{name}", ROOT / "models" / name, sha, emit)
     for name in ("tokenizer.json", "generation_config.json", "preprocessor_config.json"):
