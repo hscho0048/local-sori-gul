@@ -534,6 +534,7 @@ const SetupScreen = ({ job, error, onRetry }) => {
   const progress = (mine && job.progress) || [];
   return (
     <div className="setup-screen">
+      <div className="setup-drag" data-tauri-drag-region />
       <div className="setup-card" role="status" aria-live="polite">
         <h1 className="setup-title">모델을 내려받는 중… (약 4.5 GB, 처음 한 번)</h1>
         <p className="modal-hint">모델은 이 PC에만 저장되며, 이후 전사는 인터넷 없이 동작합니다. 중간에 닫아도 다음 실행 때 이어서 받습니다.</p>
@@ -559,12 +560,77 @@ const SetupScreen = ({ job, error, onRetry }) => {
   );
 };
 
+// The window has no OS frame (tauri.conf.json decorations: false). Its caption buttons are ported from note-taking's
+// window-caption-buttons.jsx: the same glyphs, 40 px columns the height of the top bar, a 26 px hover disc (yellow /
+// green / red), blur after a click. Portalled to the top-right corner above every overlay, so no modal or screen can
+// leave the window without a close button.
+const currentWindow = () => {
+  try { return window.__TAURI__.window.getCurrentWindow(); } catch (e) { return null; }
+};
+// Inline SVG, not Segoe Fluent Icons: that font is missing on some Windows installs and would render as tofu.
+const MinimizeGlyph = () => (
+  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+    <path d="M0 5h10" stroke="currentColor" strokeWidth="1" fill="none" shapeRendering="crispEdges" />
+  </svg>
+);
+const MaximizeGlyph = () => (
+  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+    <rect x="0.5" y="0.5" width="9" height="9" rx="1" stroke="currentColor" strokeWidth="1" fill="none" shapeRendering="crispEdges" />
+  </svg>
+);
+const RestoreGlyph = () => (
+  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+    <path d="M2.5 2.5V1.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-1" stroke="currentColor" strokeWidth="1" fill="none" />
+    <rect x="0.5" y="2.5" width="7" height="7" rx="1" stroke="currentColor" strokeWidth="1" fill="none" shapeRendering="crispEdges" />
+  </svg>
+);
+const CloseGlyph = () => (
+  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" focusable="false">
+    <path d="M0.5 0.5l9 9M9.5 0.5l-9 9" stroke="currentColor" strokeWidth="1.1" fill="none" />
+  </svg>
+);
+
+const WindowCaption = () => {
+  const [maximized, setMaximized] = React.useState(false);
+  // The glyph follows the window, not a click counter: Aero Snap, a double-click on the drag region or the taskbar
+  // can maximize it too.
+  React.useEffect(() => {
+    const win = currentWindow();
+    if (!win) return undefined;
+    let disposed = false;
+    let unlisten = null;
+    const sync = () => win.isMaximized().then((value) => { if (!disposed) setMaximized(value); }, () => {});
+    sync();
+    win.onResized(sync).then((remove) => { if (disposed) remove(); else unlisten = remove; }, () => {});
+    return () => { disposed = true; if (unlisten) unlisten(); };
+  }, []);
+  const run = (method) => (event) => {
+    event.currentTarget.blur(); // OS caption buttons never keep focus; keyboard users still get :focus-visible
+    const win = currentWindow();
+    if (win) win[method]().catch((error) => console.warn(`window ${method} failed`, error));
+  };
+  const button = (className, label, method, glyph) => (
+    <button type="button" className={`caption-btn ${className}`} title={label} aria-label={label} onClick={run(method)}>
+      <span className="caption-disc" aria-hidden="true">{glyph}</span>
+    </button>
+  );
+  return ReactDOM.createPortal(
+    <div className="caption">
+      {button('caption-min', '최소화', 'minimize', <MinimizeGlyph />)}
+      {button('caption-max', maximized ? '이전 크기로' : '최대화', 'toggleMaximize', maximized ? <RestoreGlyph /> : <MaximizeGlyph />)}
+      {/* close(), never destroy(): CloseRequested finishes a live recording and keeps its WAV before the app exits. */}
+      {button('caption-close', '닫기', 'close', <CloseGlyph />)}
+    </div>,
+    document.body,
+  );
+};
+
 const TopBar = ({ query, setQuery, folders, folderFilter, setFolderFilter, onNewNote }) => {
   const [filterOpen, setFilterOpen] = React.useState(false);
   const activeFolder = folders.find((f) => f.id === folderFilter);
   return (
-    <header className="topbar">
-      <div className="brand">소리글</div>
+    <header className="topbar" data-tauri-drag-region>
+      <div className="brand" data-tauri-drag-region>소리글</div>
       <input
         className="search"
         placeholder="검색어를 입력해 주세요"
@@ -587,6 +653,9 @@ const TopBar = ({ query, setQuery, folders, folderFilter, setFolderFilter, onNew
       <button className="btn btn-primary" onClick={onNewNote}>+ 새 받아쓰기</button>
       <button className="icon-btn" aria-label="알림" disabled>🔔</button>
       <button className="icon-btn" aria-label="도움말" title="Ctrl+H: 찾아 바꾸기" disabled>?</button>
+      {/* Empty drag area, then room for the fixed caption buttons (Tauri drags only on direct clicks on these). */}
+      <div className="drag-spacer" data-tauri-drag-region />
+      <div className="caption-reserve" aria-hidden="true" />
     </header>
   );
 };
@@ -935,6 +1004,10 @@ const App = () => {
     );
   }, [queue, job, devices, setupNeeded]);
 
+  // The tray's 녹음 시작 item reads ⏹ 녹음 마치기 while a live recording runs.
+  const recording = job.state === 'running' && job.op === 'listen';
+  React.useEffect(() => { window.SoriBridge.setRecording(recording); }, [recording]);
+
   // Ctrl+Shift+R and the tray's 녹음 시작: stop a live recording, or start one with the last chooser choice.
   // ponytail: the LivePill's "마지막 구간 전사 중…" state only appears for its own button; lift `stopping` into App if needed.
   React.useEffect(() => {
@@ -1028,7 +1101,7 @@ const App = () => {
     : ((VIEWS.find(([key]) => key === view) || [])[1] || '');
 
   // After every hook above (rules of hooks): the first-run download replaces the whole dashboard.
-  if (setupNeeded) return <SetupScreen job={job} error={error} onRetry={() => { dismissError(); startSetup(); }} />;
+  if (setupNeeded) return <React.Fragment><SetupScreen job={job} error={error} onRetry={() => { dismissError(); startSetup(); }} /><WindowCaption /></React.Fragment>;
 
   return (
     <div className={`app${sidebarCollapsed ? ' collapsed' : ''}`}>
@@ -1108,6 +1181,7 @@ const App = () => {
           <div className="drop-hint">오디오 파일을 여기에 끌어 놓으세요</div>
         </div>
       )}
+      <WindowCaption />
     </div>
   );
 };

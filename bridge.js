@@ -41,6 +41,7 @@
     // Tauri's native drag & drop (paths, not File objects); type is enter | over | leave | drop.
     onDrag: (handler) => ['enter', 'over', 'leave', 'drop'].forEach((type) =>
       tauri.event.listen(`tauri://drag-${type}`, (event) => handler(type, event.payload || {}))),
+    setRecording: (recording) => tauri.core.invoke('set_recording', { recording }).catch(() => {}),
     onToggleRecording: (handler) => tauri.event.listen('toggle-recording', handler),
     isAudio: (path) => AUDIO.includes(String(path).split('.').pop().toLowerCase()),
     pickSavePath: (defaultName) => tauri.dialog.save({ defaultPath: defaultName, filters: [{ name: '텍스트 파일', extensions: ['txt'] }] }),

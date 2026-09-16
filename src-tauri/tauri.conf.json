@@ -10,7 +10,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [{ "title": "소리글", "width": 1280, "height": 820, "minWidth": 900, "minHeight": 600 }],
+    "windows": [{ "title": "소리글", "width": 1280, "height": 820, "minWidth": 900, "minHeight": 600, "decorations": false }],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*"
     }

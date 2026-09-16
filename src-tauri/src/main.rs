@@ -22,6 +22,42 @@ fn bridge(state: tauri::State<Bridge>) -> (String, String) {
     (state.url.clone(), state.token.clone())
 }
 
+struct RecordItem(MenuItem<tauri::Wry>);
+
+/// The tray's record item follows the app: the frontend reports whenever a live recording starts or ends.
+#[tauri::command]
+fn set_recording(recording: bool, item: tauri::State<RecordItem>) {
+    let _ = item.0.set_text(if recording { "⏹ 녹음 마치기" } else { "녹음 시작" });
+}
+
+/// One app per data folder. A second launch (a double double-click) used to come up without a window but with its
+/// own tray icon, bridge and hotkey. The OS drops the lock when the process ends, crash included.
+fn lock_instance(home: &std::path::Path) -> Option<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().write(true).create(true).share_mode(0).open(home.join("app.lock")).ok()
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn FindWindowW(class: *const u16, title: *const u16) -> isize;
+    fn ShowWindow(window: isize, command: i32) -> i32;
+    fn SetForegroundWindow(window: isize) -> i32;
+}
+
+/// Brings the already running instance's window to the front.
+// ponytail: found by its title "소리글"; another top-level window with exactly that title would be picked instead —
+// switch to a named pipe / tauri-plugin-single-instance if that ever happens.
+fn focus_running_instance() {
+    let title: Vec<u16> = "소리글".encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let window = FindWindowW(std::ptr::null(), title.as_ptr());
+        if window != 0 {
+            ShowWindow(window, 9); // SW_RESTORE
+            SetForegroundWindow(window);
+        }
+    }
+}
+
 /// (pythonw.exe, working dir with server.py, SORIGUL_HOME). Debug: the repo's .venv and data, so dev data keeps
 /// working. Release: the embeddable Python bundled as the `python` resource (resource dir = the exe's dir on
 /// Windows) and %LOCALAPPDATA%\Sorigul for models, library and the model lock.
@@ -36,9 +72,7 @@ fn bridge_paths() -> (PathBuf, PathBuf, PathBuf) {
     }
 }
 
-fn spawn_bridge() -> Bridge {
-    let (python, cwd, home) = bridge_paths();
-    std::fs::create_dir_all(&home).expect("cannot create the data folder");
+fn spawn_bridge(python: PathBuf, cwd: PathBuf, home: PathBuf) -> Bridge {
     let mut child = Command::new(&python)
         .arg("server.py")
         .current_dir(&cwd)
@@ -82,6 +116,12 @@ fn show_main(app: &AppHandle) {
 }
 
 fn main() {
+    let (python, cwd, home) = bridge_paths();
+    std::fs::create_dir_all(&home).expect("cannot create the data folder");
+    let Some(_instance) = lock_instance(&home) else {
+        focus_running_instance();
+        return;
+    };
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -93,8 +133,8 @@ fn main() {
                 })
                 .build(),
         )
-        .manage(spawn_bridge())
-        .invoke_handler(tauri::generate_handler![bridge])
+        .manage(spawn_bridge(python, cwd, home))
+        .invoke_handler(tauri::generate_handler![bridge, set_recording])
         .setup(|app| {
             // ponytail: if another program owns Ctrl+Shift+R the shortcut is just unavailable (tray still works);
             // add a user-chosen binding if conflicts get reported.
@@ -103,6 +143,7 @@ fn main() {
             }
             let open = MenuItem::with_id(app, "open", "열기", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "record", "녹음 시작", true, None::<&str>)?;
+            app.manage(RecordItem(record.clone()));
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
