@@ -42,11 +42,17 @@ const compareNotes = (a, b, sort) => {
   return typeof av === 'string' ? av.localeCompare(bv, 'ko') * dir : (av - bv) * dir;
 };
 
-const DEVICES = [['npu', 'NPU (Hexagon)'], ['gpu', 'GPU (Adreno)']];
+const SOURCES = [['mic', '마이크'], ['system', '시스템 소리 (Zoom·Teams)'], ['both', '마이크 + 시스템 소리']];
+// Last live-recording choice, reused by the chooser and by Ctrl+Shift+R / the tray.
+const loadLive = () => { try { return JSON.parse(localStorage.getItem('sori.live')) || {}; } catch (e) { return {}; } };
+const saveLive = (value) => { try { localStorage.setItem('sori.live', JSON.stringify({ ...loadLive(), ...value })); } catch (e) { /* private mode: not remembered */ } };
+const pickDevice = (devices, wanted) => (devices.some((d) => d.id === wanted) ? wanted : (devices[0] ? devices[0].id : ''));
+const errorText = (err) => err.message || String(err);
 
-const Chooser = ({ open, job, onClose, startPolling, openNote }) => {
+const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
   const [step, setStep] = React.useState('choose');
-  const [device, setDevice] = React.useState('npu');
+  const [device, setDevice] = React.useState('');
+  const [source, setSource] = React.useState('mic');
   const [mics, setMics] = React.useState(null); // null = not loaded yet
   const [mic, setMic] = React.useState('');
   const [errorMsg, setErrorMsg] = React.useState('');
@@ -59,7 +65,14 @@ const Chooser = ({ open, job, onClose, startPolling, openNote }) => {
     setErrorMsg('');
     setMics(null);
     setMic('');
+    setSource(loadLive().source || 'mic');
   }, [open]);
+
+  // Devices arrive from GET /devices (possibly after the chooser opened); keep the current pick if it's still
+  // offered, else the remembered one, else the first probed device.
+  React.useEffect(() => {
+    if (open && devices) setDevice((current) => pickDevice(devices, current || loadLive().device));
+  }, [open, devices]);
 
   // onClose is a fresh arrow function on every App render; reading it through a ref (instead of putting it
   // in the deps array below) keeps this effect from re-running — and re-stealing focus into the dialog —
@@ -85,6 +98,7 @@ const Chooser = ({ open, job, onClose, startPolling, openNote }) => {
     setErrorMsg('');
     window.SoriBridge.pickAudio().then((path) => {
       if (!path) return;
+      saveLive({ device });
       window.SoriBridge.transcribe(path, device).then(
         ({ note_id }) => { onClose(); startPolling(); openNote(note_id); },
         (err) => setErrorMsg(err.message || String(err)),
@@ -96,7 +110,7 @@ const Chooser = ({ open, job, onClose, startPolling, openNote }) => {
     setErrorMsg('');
     setStep('mic');
     window.SoriBridge.mics().then(
-      (list) => { setMics(list); setMic(list[0] ?? ''); }, // default to the first mic — with exactly one
+      (list) => { setMics(list); const saved = loadLive().mic; setMic(list.includes(saved) ? saved : (list[0] ?? '')); }, // default to the first mic — with exactly one
                                                              // option <select>'s onChange never fires, so
                                                              // without this `mic` stays '' and /live 400s
       (err) => { setMics([]); setErrorMsg(err.message || String(err)); },
@@ -105,9 +119,10 @@ const Chooser = ({ open, job, onClose, startPolling, openNote }) => {
 
   const startRecording = () => {
     setErrorMsg('');
-    window.SoriBridge.startLive(mic, device).then(
+    saveLive({ device, mic, source });
+    window.SoriBridge.startLive(source === 'system' ? '' : mic, device, source).then(
       ({ note_id }) => { onClose(); startPolling(); openNote(note_id); },
-      (err) => setErrorMsg(err.message || String(err)),
+      (err) => setErrorMsg(errorText(err)),
     );
   };
 
@@ -125,19 +140,25 @@ const Chooser = ({ open, job, onClose, startPolling, openNote }) => {
         <h2 className="modal-title">새 받아쓰기</h2>
         <label className="modal-field">
           <span>연산 장치</span>
-          <select value={device} onChange={(e) => setDevice(e.target.value)}>
-            {DEVICES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+          <select value={device} disabled={!devices} onChange={(e) => setDevice(e.target.value)}>
+            {(devices || []).map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
           </select>
         </label>
         {step === 'choose' && (
           <div className="modal-actions">
-            <button className="modal-choice" disabled={busy} onClick={pickFile}>오디오 전사…</button>
-            <button className="modal-choice" disabled={busy} onClick={goLive}>실시간 전사</button>
+            <button className="modal-choice" disabled={busy || !device} onClick={pickFile}>오디오 전사…</button>
+            <button className="modal-choice" disabled={busy || !device} onClick={goLive}>실시간 전사</button>
           </div>
         )}
         {step === 'mic' && (
           <div className="modal-mic">
-            {mics == null ? (
+            <label className="modal-field">
+              <span>소리 입력</span>
+              <select value={source} onChange={(e) => setSource(e.target.value)}>
+                {SOURCES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              </select>
+            </label>
+            {source !== 'system' && (mics == null ? (
               <div className="modal-hint">마이크 목록을 불러오는 중…</div>
             ) : mics.length === 0 ? (
               <div className="modal-hint">사용할 수 있는 마이크를 찾지 못했습니다. 마이크를 연결하고 Windows 개인 정보 설정에서 마이크 접근을 허용해 주세요.</div>
@@ -145,9 +166,10 @@ const Chooser = ({ open, job, onClose, startPolling, openNote }) => {
               <select value={mic} onChange={(e) => setMic(e.target.value)}>
                 {mics.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
-            )}
+            ))}
+            {source !== 'mic' && <p className="modal-hint">회의 앱 소리를 그대로 받아씁니다. 스피커 볼륨과 관계없이 기록됩니다.</p>}
             <p className="modal-hint">말이 끊길 때마다 바로 전사해 본문에 이어 붙입니다. ⏹ 녹음 마치기로 끝내면 녹음 파일도 보관됩니다.</p>
-            <button className="btn btn-primary" disabled={busy || !mics || mics.length === 0} onClick={startRecording}>녹음 시작</button>
+            <button className="btn btn-primary" disabled={busy || !device || (source !== 'system' && (!mics || mics.length === 0))} onClick={startRecording}>녹음 시작</button>
           </div>
         )}
         {errorMsg && <div className="modal-error">{errorMsg}</div>}
@@ -166,6 +188,16 @@ const countOccurrences = (text, sub) => {
     count += 1;
     idx += sub.length;
   }
+};
+
+// Stays "취소 중…" until the job actually ends (the pill/status unmounts); only a failed request re-enables it.
+const CancelButton = () => {
+  const [busy, setBusy] = React.useState(false);
+  return (
+    <button className="btn-cancel" disabled={busy} onClick={() => { setBusy(true); window.SoriBridge.cancelJob().catch(() => setBusy(false)); }}>
+      {busy ? '취소 중…' : '취소'}
+    </button>
+  );
 };
 
 const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
@@ -392,7 +424,8 @@ const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
       {exportMsg && <div className="editor-note">{exportMsg}</div>}
       {jobRunningHere && (
         <div className="job-status">
-          {job.stage}{job.op === 'transcribe' ? ` · ${job.percent.toFixed(1)}%` : ''}
+          <span className="job-stage">{job.stage}{job.op === 'transcribe' ? ` · ${job.percent.toFixed(1)}%` : ''}</span>
+          {job.op === 'transcribe' && <CancelButton />}
         </div>
       )}
       {findOpen && (
@@ -474,6 +507,50 @@ const LivePill = ({ job }) => {
       ) : (
         <button className="live-stop" onClick={onStop}>⏹ 녹음 마치기</button>
       )}
+    </div>
+  );
+};
+
+// File-transcription progress on the list screen (the editor shows its own), plus the drag & drop queue.
+const JobPill = ({ job, queued }) => {
+  if (!(job.state === 'running' && job.op === 'transcribe') && !queued) return null;
+  return (
+    <div className="live-pill job-pill">
+      {job.state === 'running' && job.op === 'transcribe' ? (
+        <React.Fragment>
+          <span className="live-stage">{job.stage} · {job.percent.toFixed(1)}%</span>
+          <CancelButton key={job.note_id} />
+        </React.Fragment>
+      ) : <span className="live-stage">전사 대기 중</span>}
+      {queued > 0 && <span className="job-queue">대기 {queued}개</span>}
+    </div>
+  );
+};
+
+// First run: the models aren't on disk yet. Shows the setup job's per-file progress from GET /job.
+const SetupScreen = ({ job, onRetry }) => {
+  const mine = job.op === 'setup';
+  const failed = mine && job.state === 'error';
+  const progress = (mine && job.progress) || [];
+  return (
+    <div className="setup-screen">
+      <div className="setup-card" role="status" aria-live="polite">
+        <h1 className="setup-title">모델을 내려받는 중… (약 4.5 GB, 처음 한 번)</h1>
+        <p className="modal-hint">모델은 이 PC에만 저장되며, 이후 전사는 인터넷 없이 동작합니다. 중간에 닫아도 다음 실행 때 이어서 받습니다.</p>
+        <ul className="setup-files">
+          {(mine && job.ready ? job.ready : []).map((name) => <li key={name} className="setup-file setup-done">✓ {name}</li>)}
+          {mine && job.state === 'running' && job.file && !(job.ready || []).includes(job.file) && (
+            <li className="setup-file">
+              <span className="setup-name">{job.file}</span>
+              <progress max="100" value={job.percent || 0} />
+              <span className="setup-size">{progress.length ? `${progress[1]} / ${progress[2]} MiB` : ''}</span>
+            </li>
+          )}
+        </ul>
+        {mine && job.state === 'running' && <div className="job-status"><span className="job-stage">{job.stage}</span></div>}
+        {failed && <div className="modal-error">{job.error}</div>}
+        {(failed || !mine) && <button className="btn btn-primary" onClick={onRetry}>{failed ? '다시 시도' : '내려받기 시작'}</button>}
+      </div>
     </div>
   );
 };
@@ -666,6 +743,15 @@ const App = () => {
   const [sort, setSort] = React.useState({ key: 'created', dir: 'desc' });
   const [openNoteId, setOpenNoteId] = React.useState(null);
   const [job, setJob] = React.useState({ state: 'idle' });
+  const [devices, setDevices] = React.useState(null); // null = GET /devices hasn't answered yet
+  const [setupNeeded, setSetupNeeded] = React.useState(false);
+  const [dragging, setDragging] = React.useState(false);
+  const [queue, setQueue] = React.useState([]); // dropped audio paths not yet started
+  // Read by the once-registered Tauri event listeners below, which would otherwise see the first render's values.
+  const jobRef = React.useRef(job);
+  jobRef.current = job;
+  const devicesRef = React.useRef(devices);
+  devicesRef.current = devices;
   const [chooserOpen, setChooserOpen] = React.useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -728,10 +814,12 @@ const App = () => {
           awaitingFirst = false;
           setJob((prev) => {
             if (j.state !== 'running' && (first || prev.state === 'running')) {
+              if (j.op === 'setup') loadDevices(); // models_ready decides whether the setup screen goes away
               refresh();
               // No need to chain after refresh() any more: refresh()'s success path only clears an error
               // it set itself (see errorFromRefresh above), so this message survives regardless of order.
-              if (j.state === 'error') showError(j.error || '작업이 실패했습니다.');
+              // A failed setup is shown on the setup screen itself (with 다시 시도), not in the banner.
+              if (j.state === 'error' && j.op !== 'setup') showError(j.error || '작업이 실패했습니다.');
             }
             return j;
           });
@@ -750,6 +838,21 @@ const App = () => {
     };
     tick();
   };
+
+  // Called from the poll loop above and from once-registered effects/listeners; only touches setters, refs
+  // and startPolling (whose state lives in refs), so a stale closure of these is harmless.
+  const loadDevices = () => window.SoriBridge.devices().then(
+    (d) => { setDevices(d.devices); setSetupNeeded(!d.models_ready); return d; },
+    (err) => { showError(errorText(err)); return null; },
+  );
+  // 409 = a job is already running (e.g. the setup this app started before a relaunch): just follow it.
+  const startSetup = () => window.SoriBridge.setup().then(
+    () => startPolling(),
+    (err) => { if (err.status === 409) startPolling(); else showError(errorText(err)); },
+  );
+  React.useEffect(() => {
+    loadDevices().then((d) => { if (d && !d.models_ready) startSetup(); });
+  }, []);
   // Stop polling on unmount so an in-flight request's response can't setState after the App is gone.
   React.useEffect(() => () => {
     pollingRef.current = false;
@@ -786,6 +889,69 @@ const App = () => {
       setJob(j);
       if (j.state === 'running') startPolling();
     }, () => {});
+  }, []);
+
+  React.useEffect(() => {
+    window.SoriBridge.onDrag((type, payload) => {
+      setDragging(type === 'enter' || type === 'over');
+      if (type !== 'drop') return;
+      const paths = payload.paths || [];
+      const audio = paths.filter(window.SoriBridge.isAudio);
+      if (audio.length) setQueue((q) => [...q, ...audio]);
+      if (audio.length < paths.length) showError('오디오 파일만 전사할 수 있습니다.');
+    });
+  }, []);
+  // Dropped files run one after another (one model job at a time). The job is marked running optimistically so
+  // this effect never double-starts before the first poll lands; a 409 (another job) just waits for it to end.
+  // Keyed on the whole `job` object (a new one per poll), not just job.state: if the blocking job ends before
+  // the 409's poll lands and state goes e.g. 'done' -> 'done', the queue would otherwise never retry.
+  // startPolling's first tick always counts as a transition, so an instantly-finished queued job still refreshes.
+  const startingRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!queue.length || !devices || setupNeeded || job.state === 'running' || startingRef.current) return;
+    startingRef.current = true;
+    const path = queue[0];
+    window.SoriBridge.transcribe(path, pickDevice(devices, loadLive().device)).then(
+      ({ note_id }) => {
+        startingRef.current = false;
+        setQueue((q) => q.slice(1));
+        setJob((prev) => ({ ...prev, state: 'running', op: 'transcribe', note_id, stage: '준비 중', percent: 0, text: '' }));
+        startPolling();
+        refresh();
+      },
+      (err) => {
+        startingRef.current = false;
+        if (err.status === 409) { startPolling(); return; }
+        setQueue((q) => q.slice(1));
+        showError(`${path.split(/[\\/]/).pop()}: ${errorText(err)}`);
+      },
+    );
+  }, [queue, job, devices, setupNeeded]);
+
+  // Ctrl+Shift+R and the tray's 녹음 시작: stop a live recording, or start one with the last chooser choice.
+  // ponytail: the LivePill's "마지막 구간 전사 중…" state only appears for its own button; lift `stopping` into App if needed.
+  React.useEffect(() => {
+    window.SoriBridge.onToggleRecording(() => {
+      const current = jobRef.current;
+      if (current.state === 'running') {
+        if (current.op === 'listen') window.SoriBridge.stopLive().catch((err) => showError(errorText(err)));
+        else showError('다른 전사 작업이 진행 중입니다. 끝난 뒤 다시 시작해 주세요.');
+        return;
+      }
+      const list = devicesRef.current;
+      if (!list || !list.length) return;
+      const saved = loadLive();
+      const source = saved.source || 'mic';
+      const begin = (mic) => window.SoriBridge.startLive(mic, pickDevice(list, saved.device), source).then(
+        ({ note_id }) => { setChooserOpen(false); startPolling(); openNote(note_id); refresh(); },
+        (err) => showError(errorText(err)),
+      );
+      if (source === 'system') { begin(''); return; }
+      window.SoriBridge.mics().then((mics) => {
+        const mic = mics.includes(saved.mic) ? saved.mic : mics[0];
+        if (mic) begin(mic); else showError('사용할 수 있는 마이크를 찾지 못했습니다.');
+      }, (err) => showError(errorText(err)));
+    });
   }, []);
 
   const visible = React.useMemo(() => {
@@ -852,6 +1018,9 @@ const App = () => {
   const heading = view.startsWith('folder:')
     ? findFolderName(Number(view.slice('folder:'.length)))
     : ((VIEWS.find(([key]) => key === view) || [])[1] || '');
+
+  // After every hook above (rules of hooks): the first-run download replaces the whole dashboard.
+  if (setupNeeded) return <SetupScreen job={job} onRetry={startSetup} />;
 
   return (
     <div className={`app${sidebarCollapsed ? ' collapsed' : ''}`}>
@@ -923,8 +1092,14 @@ const App = () => {
           </React.Fragment>
         )}
       </main>
-      <Chooser open={chooserOpen} job={job} onClose={() => setChooserOpen(false)} startPolling={startPolling} openNote={openNote} />
+      <Chooser open={chooserOpen} job={job} devices={devices} onClose={() => setChooserOpen(false)} startPolling={startPolling} openNote={openNote} />
       <LivePill job={job} />
+      {!openNoteId && <JobPill job={job} queued={queue.length} />}
+      {dragging && (
+        <div className="drop-overlay" aria-hidden="true">
+          <div className="drop-hint">오디오 파일을 여기에 끌어 놓으세요</div>
+        </div>
+      )}
     </div>
   );
 };

@@ -111,7 +111,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .editor-title:hover, .editor-title:focus { border-color: var(--border); background: var(--surface); }
 .save-status { font-size: 12px; color: var(--text-tertiary); white-space: nowrap; }
 .editor-note { font-size: 12px; color: var(--text-secondary); }
-.job-status { font-size: 12px; color: var(--text-secondary); }
+.job-status { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 12px; }
 .editor-textarea { flex: 1; width: 100%; box-sizing: border-box; resize: none; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); padding: 16px; font-size: 14px; line-height: 1.6; }
 .editor-textarea:read-only { background: var(--sidebar); color: var(--text-secondary); }
 
@@ -133,3 +133,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .live-stop { flex-shrink: 0; white-space: nowrap; border: none; background: #fff; color: #101828; border-radius: var(--radius-pill); padding: 6px 14px; cursor: pointer; font-weight: 600; }
 .live-stop:hover { filter: brightness(0.95); }
 .live-stopping { flex-shrink: 0; font-size: 12px; color: rgba(255,255,255,0.7); white-space: nowrap; }
+.job-stage { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-cancel { flex: none; border: 1px solid var(--danger); color: var(--danger); background: transparent; border-radius: 999px; padding: 4px 12px; font: inherit; cursor: pointer; }
+.btn-cancel:hover:not(:disabled) { background: var(--danger); color: #fff; }
+.btn-cancel:disabled { opacity: .6; cursor: default; }
+.job-pill { bottom: 72px; }            /* sits above the live pill if both ever show */
+.job-queue { flex: none; opacity: .75; }
+.drop-overlay { position: fixed; inset: 0; z-index: 100; pointer-events: none; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 70%, transparent); border: 3px dashed var(--accent); }
+.drop-hint { font-size: 20px; font-weight: 600; padding: 16px 24px; border-radius: 12px; background: var(--surface); }
+.setup-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+.setup-card { width: min(560px, 100%); display: grid; gap: 12px; }
+.setup-title { font-size: 22px; margin: 0; }
+.setup-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.setup-file { display: grid; grid-template-columns: 1fr 160px auto; gap: 8px; align-items: center; font-variant-numeric: tabular-nums; }
+.setup-done { grid-template-columns: 1fr; opacity: .7; }
+.setup-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

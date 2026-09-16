@@ -11,7 +11,11 @@
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || response.statusText);
+    if (!response.ok) {
+      const error = new Error(data.error || response.statusText);
+      error.status = response.status;
+      throw error;
+    }
     return data;
   };
   const q = encodeURIComponent;
@@ -27,10 +31,18 @@
     deleteFolder: (id) => call('DELETE', `/folders/${id}`),
     mics: () => call('GET', '/mics'),
     transcribe: (path, device) => call('POST', '/transcribe', { path, device }),
-    startLive: (mic, device) => call('POST', '/live', { mic, device }),
+    devices: () => call('GET', '/devices'),
+    setup: () => call('POST', '/setup', {}),
+    cancelJob: () => call('POST', '/job/cancel', {}),
+    startLive: (mic, device, source) => call('POST', '/live', { mic, device, source }),
     stopLive: () => call('POST', '/live/stop', {}),
     job: () => call('GET', '/job'),
     pickAudio: () => tauri.dialog.open({ multiple: false, directory: false, filters: [{ name: '오디오', extensions: AUDIO }] }),
+    // Tauri's native drag & drop (paths, not File objects); type is enter | over | leave | drop.
+    onDrag: (handler) => ['enter', 'over', 'leave', 'drop'].forEach((type) =>
+      tauri.event.listen(`tauri://drag-${type}`, (event) => handler(type, event.payload || {}))),
+    onToggleRecording: (handler) => tauri.event.listen('toggle-recording', handler),
+    isAudio: (path) => AUDIO.includes(String(path).split('.').pop().toLowerCase()),
     pickSavePath: (defaultName) => tauri.dialog.save({ defaultPath: defaultName, filters: [{ name: '텍스트 파일', extensions: ['txt'] }] }),
   });
 })();
