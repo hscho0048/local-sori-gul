@@ -2,13 +2,17 @@
 
 Tauri starts `pythonw server.py`, reads the first stdout line `PORT <n> <token>` and sends the token as X-Bridge-Token
 on every request (any web page could otherwise reach a localhost port). The server exits when its stdin closes, i.e.
-when the app goes away, cancelling a running job first so the model lock is released."""
+when the app goes away, finishing a live recording or cancelling any other running job first so the model lock is
+released."""
 from contextlib import closing
 from datetime import datetime
+import functools
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import importlib.util
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import secrets
 import sys
@@ -18,8 +22,9 @@ from urllib.parse import parse_qs, urlparse
 import wave
 
 from engine import EXTENSIONS, audio_devices
-from jobs import run_job
+from jobs import run_job, worker_python
 from library import Library, keywords
+from setup_assets import ROOT, required_files
 
 TOKEN = secrets.token_urlsafe(24)
 JOB = {"state": "idle"}  # ponytail: read/written across threads with no lock, relying on GIL-atomic dict
@@ -27,7 +32,9 @@ JOB = {"state": "idle"}  # ponytail: read/written across threads with no lock, r
                           # assumption ever breaks (e.g. multi-field consistency is needed).
 JOB_LOCK = threading.Lock()
 FINISH = threading.Event()  # ⏹ 녹음 마치기: stop recording, transcribe the tail, keep text and WAV
-CANCEL = threading.Event()  # set only on shutdown
+CANCEL = threading.Event()  # set only on shutdown: no new jobs after that
+JOB_CANCEL = threading.Event()  # the running job's own cancel (취소 or shutdown); replaced per job
+LABELS = {"npu": "NPU (Hexagon)", "gpu": "GPU (Adreno)", "intel": "인텔 GPU (OpenVINO)", "cpu": "CPU"}
 WORKER = None
 ROUTES = []
 finished = ""  # text of completed chunks only (updated on "text" events, not "preview"); what we save
@@ -64,10 +71,36 @@ def save_text(path, text):
             temporary.unlink()
 
 
+@functools.cache
+def probe_devices():
+    """Devices usable on this PC, probed once without loading a model or importing QNN on x64."""
+    ids = []
+    if platform.machine() == "ARM64":
+        spec = importlib.util.find_spec("onnxruntime")
+        if spec and (Path(spec.origin).parent / "capi" / "QnnHtp.dll").is_file():
+            ids.append("npu")
+        python, packages = worker_python("transcribe", {"device": "gpu"})
+        if python.is_file() and (packages is None or packages.is_dir()):
+            ids.append("gpu")
+    else:
+        try:
+            from engine import openvino_device
+            if openvino_device() in ("GPU", "NPU"):
+                ids.append("intel")
+        except Exception:
+            pass  # no OpenVINO runtime or no Intel device: CPU only
+    return ids + ["cpu"]
+
+
+def models_ready():
+    return all((ROOT / "models" / name).is_file() for name in required_files())
+
+
 def device(body):
-    value = body.get("device", "npu")
-    if value not in ("npu", "gpu"):
-        raise HttpError(400, "device must be 'npu' or 'gpu'")
+    available = probe_devices()
+    value = body.get("device") or available[0]
+    if value not in available:
+        raise HttpError(400, f"device must be one of {', '.join(available)}")
     return value
 
 
@@ -77,19 +110,22 @@ def ensure_idle():
 
 
 def start_job(operation, payload, note_id):
-    global WORKER, JOB, finished
+    global WORKER, JOB, JOB_CANCEL, finished
     with JOB_LOCK:
         ensure_idle()
+        if CANCEL.is_set():
+            raise HttpError(503, "앱을 종료하는 중입니다.")
         FINISH.clear()
+        JOB_CANCEL = threading.Event()
         finished = ""
-        JOB = {"state": "running", "op": operation, "note_id": note_id, "stage": "준비 중",
-               "text": "", "percent": 0, "error": None}  # new dict, not JOB.clear()+update(), so a
+        JOB = {"state": "running", "op": operation, "note_id": note_id, "stage": "준비 중", "text": "", "percent": 0,
+               "error": None, "file": "", "ready": [], "progress": []}  # new dict, not JOB.clear()+update(), so a
                # concurrent GET /job (reading the JOB global with no lock) never observes {}
-    WORKER = threading.Thread(target=run, args=(operation, payload, note_id), daemon=True)
+    WORKER = threading.Thread(target=run, args=(operation, payload, note_id, JOB_CANCEL), daemon=True)
     WORKER.start()
 
 
-def run(operation, payload, note_id):
+def job_emitter(operation, note_id):
     duration = None
 
     def emit(kind, value):
@@ -101,12 +137,21 @@ def run(operation, payload, note_id):
             duration = value
         elif kind == "progress":
             JOB["percent"] = value[0]
+            JOB["progress"] = list(value)
+        elif kind == "file":
+            JOB["file"] = value
+            JOB["stage"] = f"{value} 내려받는 중"
+        elif kind == "ready":
+            JOB["ready"] = JOB.get("ready", []) + [value]
         elif kind == "text":
             finished = value
             JOB["text"] = value
         elif kind == "preview":
             JOB["text"] = value[0]
         elif kind == "done":
+            if operation == "setup":
+                JOB.update(state="done", percent=100)
+                return
             write_error = None
             try:
                 with closing(Library()) as library:
@@ -134,15 +179,20 @@ def run(operation, payload, note_id):
                 JOB.update(state="error", error=write_error)
         elif kind in ("error", "cancelled"):
             try:
-                if finished:  # keep what was transcribed so far, as the Tk app did
+                if finished and note_id is not None:  # keep what was transcribed so far, as the Tk app did
                     with closing(Library()) as library:
                         library.update(note_id, transcript=finished)
             except Exception:
                 pass  # keep the original error/cancel reason; the job slot still frees up below
             JOB.update(state="error", error=str(value or "취소됐습니다."))
 
+    return emit
+
+
+def run(operation, payload, note_id, cancel):
+    emit = job_emitter(operation, note_id)
     try:
-        run_job(operation, payload, emit, CANCEL, finish=FINISH)
+        run_job(operation, payload, emit, cancel, finish=FINISH)
     except Exception as error:
         emit("error", str(error))
 
@@ -206,6 +256,24 @@ def mics(library, body, query):
     return audio_devices()
 
 
+@route("GET", r"/devices")
+def devices(library, body, query):
+    return {"devices": [{"id": d, "label": LABELS[d]} for d in probe_devices()], "models_ready": models_ready()}
+
+
+@route("POST", r"/setup")
+def setup(library, body, query):
+    start_job("setup", {}, None)
+    return {"ok": True}
+
+
+@route("POST", r"/job/cancel")
+def cancel_job(library, body, query):
+    if JOB.get("state") == "running" and JOB.get("op") == "transcribe":
+        JOB_CANCEL.set()
+    return {"ok": True}
+
+
 @route("POST", r"/transcribe")
 def transcribe(library, body, query):
     path = Path(body.get("path") or "")
@@ -222,12 +290,16 @@ def transcribe(library, body, query):
 
 @route("POST", r"/live")
 def live(library, body, query):
-    if not body.get("mic"):
+    source = body.get("source", "mic")
+    if source not in ("mic", "system", "both"):
+        raise HttpError(400, "source must be 'mic', 'system' or 'both'")
+    if source != "system" and not body.get("mic"):
         raise HttpError(400, "마이크를 선택해 주세요.")
     selected = device(body)
     ensure_idle()
     note_id = library.create(f"실시간 전사 {datetime.now():%Y-%m-%d %H:%M}", "live")
-    start_job("listen", {"mic": body["mic"], "device": selected, "note_id": note_id}, note_id)
+    start_job("listen", {"mic": body.get("mic", ""), "source": source, "device": selected, "note_id": note_id},
+              note_id)
     return {"note_id": note_id}
 
 
@@ -295,6 +367,7 @@ def main():
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print("PORT", server.server_address[1], TOKEN, flush=True)  # pythonw stdout is a block-buffered pipe
+    threading.Thread(target=probe_devices, daemon=True).start()  # warm the cache (OpenVINO import can take seconds)
     sys.stdin.buffer.read()  # blocks until Tauri closes the pipe (window closed, app exited or crashed)
     if JOB.get("state") == "running" and finished:
         # a window close during a job must not lose the transcript: save what's finished so far before
@@ -304,10 +377,11 @@ def main():
                 library.update(JOB["note_id"], transcript=finished)
         except Exception:
             pass  # best-effort — the process is exiting either way
+    CANCEL.set()  # no new jobs from here on
     if JOB.get("state") == "running" and JOB.get("op") == "listen":
         FINISH.set()  # same as ⏹ 녹음 마치기: the tail is transcribed and jobs.py attaches the WAV to the note
     else:
-        CANCEL.set()  # other jobs are discarded; the worker notices CANCEL between chunks
+        JOB_CANCEL.set()  # other jobs are discarded; the worker notices between chunks
     if WORKER:
         # ponytail: 30 s covers the tail segment (<= 20 s of audio) plus worker exit on NPU; a longer wait (or a
         # "finishing…" notice) is needed if GPU first-compile ever lands inside a shutdown.
