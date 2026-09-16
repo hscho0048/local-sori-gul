@@ -659,8 +659,6 @@ const TopBar = ({ query, setQuery, folders, folderFilter, setFolderFilter, onNew
         )}
       </div>
       <button className="btn btn-primary" onClick={onNewNote}>+ 새 받아쓰기</button>
-      <button className="icon-btn" aria-label="알림" disabled>🔔</button>
-      <button className="icon-btn" aria-label="도움말" title="Ctrl+H: 찾아 바꾸기" disabled>?</button>
       {/* Empty drag area, then room for the fixed caption buttons (Tauri drags only on direct clicks on these). */}
       <div className="drag-spacer" data-tauri-drag-region />
       <div className="caption-reserve" aria-hidden="true" />
