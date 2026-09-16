@@ -108,7 +108,7 @@ def setup_whisper_gpu(emit=log):
         model = onnx.load(str(target), load_external_data=False)
         shape = [d.dim_value for d in model.graph.input[0].type.tensor_type.shape.dim]
         if shape == [1, 128, 3000]:
-            emit("ready", "whisper-gpu/encoder_static_fp16.onnx")
+            emit("ready", target.relative_to(ROOT).as_posix())
             return
     source = folder / "encoder_model_fp16.onnx"
     download(f"{GPU_BASE}/{source.name}", source, GPU_FILES[source.name], emit=emit)
@@ -120,7 +120,7 @@ def setup_whisper_gpu(emit=log):
     partial = target.with_suffix(".onnx.part")
     onnx.save(model, str(partial))
     partial.replace(target)
-    emit("ready", "whisper-gpu/encoder_static_fp16.onnx")
+    emit("ready", target.relative_to(ROOT).as_posix())
 
 
 def main(emit=log, whisper_gpu=False):
