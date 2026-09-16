@@ -73,7 +73,7 @@ data dir equals the NSIS default install dir (kept per the earlier spec).
 - Device ids `intel-gpu` / `intel-npu` (labels "인텔 GPU (OpenVINO)" / "인텔 NPU (OpenVINO)"); `intel` removed.
   `probe_devices()` on x64 lists `intel-gpu` when OpenVINO reports a GPU.*, `intel-npu` when it reports an NPU.*,
   then `cpu`.
-- `load_whisper('intel-gpu'|'intel-npu')` → `WhisperCPU(openvino="GPU"|"NPU")`; the OpenVINO `device_type` is that
+- `load_whisper('intel-gpu'|'intel-npu')` → `WhisperCPU(ov_device="GPU"|"NPU")`; the OpenVINO `device_type` is that
   value; cache dir `models/openvino-cache/<GPU|NPU>`; ready label `인텔 GPU (OpenVINO) · CPU (decoder)` /
   `인텔 NPU (OpenVINO) · CPU (decoder)`. Diarization stays on the CPU.
 - The chooser already remembers the last device (`sori.live.device`); an unavailable saved id falls back to the
