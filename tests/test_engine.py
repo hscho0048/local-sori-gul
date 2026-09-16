@@ -307,8 +307,8 @@ class DeviceTests(unittest.TestCase):
         created = []
 
         class Session:
-            def __init__(self, path, sess_options=None, providers=None):
-                self.path, self.providers = path, providers
+            def __init__(self, path, sess_options=None, providers=None, disabled_optimizers=None):
+                self.path, self.providers, self.disabled = path, providers, disabled_optimizers
                 created.append(self)
             def get_providers(self):
                 return [p if isinstance(p, str) else p[0] for p in self.providers]
@@ -331,7 +331,8 @@ class DeviceTests(unittest.TestCase):
         stages = []
         with tempfile.TemporaryDirectory() as folder, patch.dict(sys.modules, {
                 "onnxruntime": ort, "tokenizers": tokenizers, "transformers": transformers, "openvino": openvino,
-                "onnxruntime_qnn": None}), patch("engine.os.add_dll_directory", return_value=None),                 patch.dict(os.environ):
+                "onnxruntime_qnn": None}), patch("engine.os.add_dll_directory", return_value=None), \
+                patch.dict(os.environ):
             self.fake_models(folder)
             worker = WhisperCPU(lambda kind, value: stages.append((kind, value)), threading.Event(),
                                 model_dir=folder, intel=intel)
@@ -340,6 +341,8 @@ class DeviceTests(unittest.TestCase):
     def test_cpu_device_runs_both_sessions_on_the_cpu_without_qnn(self):
         worker, created, stages = self.load(intel=False)
         self.assertEqual([s.providers for s in created], [["CPUExecutionProvider"], ["CPUExecutionProvider"]])
+        # onnxruntime 1.24 (x64) fails to build this fp16 encoder with the fusion enabled
+        self.assertEqual(created[0].disabled, ["SimplifiedLayerNormFusion"])
         self.assertEqual(worker.limit, WhisperGPU.LIMIT)
         self.assertEqual(worker.encoder_dtype, np.float32)
         self.assertIn(("ready", "CPU"), stages)

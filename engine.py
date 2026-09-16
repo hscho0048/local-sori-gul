@@ -502,7 +502,11 @@ class WhisperCPU(WhisperGPU):
         ort.disable_telemetry_events()
         check_cancel(cancel)
         emit("stage", "encoder 모델을 불러오는 중… (처음은 수 분)" if intel else "encoder 모델을 불러오는 중…")
-        self.encoder = ort.InferenceSession(str(encoder_file), sess_options=ort.SessionOptions(), providers=encoder_providers)
+        # onnxruntime 1.24 (x64, via onnxruntime-openvino) cannot build this fp16 encoder with SimplifiedLayerNormFusion
+        # ("Attempting to get index by a name which does not exist: InsertedPrecisionFreeCast_…"); skipping that one
+        # fusion gives identical output.
+        self.encoder = ort.InferenceSession(str(encoder_file), sess_options=ort.SessionOptions(), providers=encoder_providers,
+                                            disabled_optimizers=["SimplifiedLayerNormFusion"])
         if intel and "OpenVINOExecutionProvider" not in self.encoder.get_providers():
             raise RuntimeError("OpenVINO 세션 생성에 실패했습니다. 인텔 그래픽 드라이버를 확인하거나 CPU를 선택해 주세요.")
         self.encoder_dtype = np.float16 if self.encoder.get_inputs()[0].type == "tensor(float16)" else np.float32

@@ -1,6 +1,7 @@
 # x64: onnxruntime-openvino provides the `onnxruntime` module (CPU + OpenVINO EPs); do not also install onnxruntime.
 onnxruntime-openvino==1.24.1
-openvino==2026.0.0
+# The EP DLL of onnxruntime-openvino 1.24.1 only loads with OpenVINO 2025.4 (2026.x: Windows error 127, EP silently dropped).
+openvino==2025.4.1
 onnx==1.22.0
-numpy==2.4.6  # openvino 2026.0.0 requires numpy<2.5
+numpy==2.3.5  # openvino 2025.4.1 requires numpy<2.4
 transformers==4.57.6
