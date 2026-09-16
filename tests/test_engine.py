@@ -242,5 +242,54 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(worker_environment("listen", {}), ".venv")
 
 
+class LayoutTests(unittest.TestCase):
+    def test_sorigul_home_moves_data_but_not_code(self):
+        import importlib, os
+        import engine, jobs, library, diarize
+        with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {"SORIGUL_HOME": home}):
+            try:
+                for module in (engine, jobs, library, diarize):
+                    importlib.reload(module)
+                self.assertEqual(engine.ROOT, Path(home))
+                self.assertEqual(library.LIBRARY, Path(home) / "library")
+                self.assertEqual(diarize.MODEL_DIR, Path(home) / "models" / "speaker")
+                self.assertEqual(jobs.CODE, Path(jobs.__file__).resolve().parent)
+            finally:
+                os.environ.pop("SORIGUL_HOME")
+                for module in (engine, jobs, library, diarize):
+                    importlib.reload(module)
+
+    def test_ffmpeg_falls_back_to_the_copy_next_to_the_code(self):
+        import engine
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as code:
+            (Path(code) / "tools").mkdir()
+            (Path(code) / "tools" / "ffmpeg.exe").write_bytes(b"")
+            with patch("engine.ROOT", Path(home)), patch("engine.CODE", Path(code)):
+                self.assertEqual(engine.ffmpeg_path(), Path(code) / "tools" / "ffmpeg.exe")
+                (Path(home) / "tools").mkdir()
+                (Path(home) / "tools" / "ffmpeg.exe").write_bytes(b"")
+                self.assertEqual(engine.ffmpeg_path(), Path(home) / "tools" / "ffmpeg.exe")
+            with patch("engine.ROOT", Path(home) / "x"), patch("engine.CODE", Path(home) / "y"):
+                with self.assertRaisesRegex(RuntimeError, "오디오 디코더"):
+                    engine.ffmpeg_path()
+
+    def test_worker_python_uses_venvs_in_dev_and_package_dirs_in_the_bundle(self):
+        import jobs
+        with tempfile.TemporaryDirectory() as code, patch("jobs.CODE", Path(code)):
+            self.assertEqual(jobs.worker_python("transcribe", {"device": "gpu"}),
+                             (Path(code) / ".venv-whisper-gpu" / "Scripts" / "pythonw.exe", None))
+            self.assertEqual(jobs.worker_python("transcribe", {"device": "cpu"}),
+                             (Path(code) / ".venv" / "Scripts" / "pythonw.exe", None))
+            (Path(code) / "python312._pth").write_text("")
+            self.assertEqual(jobs.worker_python("listen", {"device": "gpu"}),
+                             (Path(code) / "pythonw.exe", Path(code) / "Lib" / "gpu-packages"))
+            self.assertEqual(jobs.worker_python("transcribe", {"device": "intel"}),
+                             (Path(code) / "pythonw.exe", Path(code) / "Lib" / "site-packages"))
+            with patch("jobs.platform.machine", return_value="ARM64"):
+                self.assertEqual(jobs.worker_environment("setup", {}), ".venv-whisper-gpu")
+            with patch("jobs.platform.machine", return_value="AMD64"):
+                self.assertEqual(jobs.worker_environment("setup", {}), ".venv")
+
+
 if __name__ == "__main__":
     unittest.main()

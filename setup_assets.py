@@ -1,11 +1,14 @@
 """One-time public model download; never imports or uploads user audio."""
 import hashlib
 import argparse
+import os
 from pathlib import Path
+import platform
 import urllib.request
 import zipfile
 
-ROOT = Path(__file__).resolve().parent
+CODE = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("SORIGUL_HOME") or CODE)
 MODEL_REV = "7fbb62e962d1bda945b81fbc3b048e5bb5773cf0"
 TOKENIZER_REV = "41f01f3fe87f28c78e2fbf8b568835947dd65ed9"
 BASE = f"https://huggingface.co/FluidInference/whisper-large-v3-turbo-qnn/resolve/{MODEL_REV}/snapdragon-x-elite"

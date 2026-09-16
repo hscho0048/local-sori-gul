@@ -1,13 +1,14 @@
 """Local transcript library: SQLite notes with folders, star and trash. Stdlib only, shared by the bridge and the
 transcription worker (jobs.py attaches a live recording's WAV)."""
 from collections import Counter
+import os
 from pathlib import Path
 import re
 import shutil
 import sqlite3
 import time
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("SORIGUL_HOME") or Path(__file__).resolve().parent)
 LIBRARY = ROOT / "library"
 DB = LIBRARY / "notes.db"
 SCHEMA = """

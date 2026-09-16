@@ -19,7 +19,7 @@ Scope (exactly three features, nothing more):
 
 Backend: reuse, do not rewrite. Copy from audio2text: engine.py, jobs.py,
 diarize.py, library.py (keep only notes/folders/trash/star tables), setup_assets.py,
-setup.cmd/setup.ps1, requirements.txt, requirements-whisper-gpu.txt, tools/ffmpeg.exe
+setup.cmd/setup.ps1, requirements-arm64.txt, requirements-x64.txt, requirements-whisper-gpu.txt, tools/ffmpeg.exe
 (+LICENSE), tests/test_engine.py, tests/test_diarize.py, tests/test_library.py.
 The real-time capture loop lives inside audio2text/app.py — extract it into a
 module, drop the Tk parts. Leave audio2text untouched; deleting from it is a

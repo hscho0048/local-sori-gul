@@ -1,0 +1,6 @@
+# x64: onnxruntime-openvino provides the `onnxruntime` module (CPU + OpenVINO EPs); do not also install onnxruntime.
+onnxruntime-openvino==1.24.1
+openvino==2026.0.0
+onnx==1.22.0
+numpy==2.5.3
+transformers==4.57.6

@@ -2,28 +2,43 @@
 import multiprocessing as mp
 import os
 from pathlib import Path
+import platform
 import sys
 import time
 
-ROOT = Path(__file__).resolve().parent
-RESULT_KIND = {"transcribe": "done", "listen": "done"}
+CODE = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("SORIGUL_HOME") or CODE)
+RESULT_KIND = {"transcribe": "done", "listen": "done", "setup": "done"}
 
 
 def worker_environment(operation, payload):
-    return ".venv-whisper-gpu" if operation in ("transcribe", "listen") and payload.get("device", "npu") == "gpu" else ".venv"
+    gpu = operation in ("transcribe", "listen") and payload.get("device", "npu") == "gpu"
+    # setup builds static-shape ONNX files, and only the GPU environment has `onnx` on ARM64
+    return ".venv-whisper-gpu" if gpu or (operation == "setup" and platform.machine() == "ARM64") else ".venv"
 
 
-def model_worker(connection, cancelled, operation, payload, finish=None):
-    # spawn copies the UI's sys.path, which points at .venv; swap in this interpreter's own site-packages
-    # so the .venv-whisper-gpu child imports its own packages.
+def worker_python(operation, payload):
+    """(pythonw.exe, package dir). Installed app: the embeddable interpreter this file lives next to and one of its
+    two package dirs; dev: a venv, which finds its own site-packages (package dir None)."""
+    venv = worker_environment(operation, payload)
+    if (CODE / "python312._pth").is_file():
+        return CODE / "pythonw.exe", CODE / "Lib" / ("gpu-packages" if venv == ".venv-whisper-gpu" else "site-packages")
+    return CODE / venv / "Scripts" / "pythonw.exe", None
+
+
+def model_worker(connection, cancelled, operation, payload, finish=None, packages=None):
+    # spawn copies the parent's sys.path; swap in this worker's own packages (venv site-packages, or the bundle's
+    # site-packages / gpu-packages dir) so the GPU child never imports the NPU runtime or vice versa.
     import site
     import sys
-    sys.path = [p for p in sys.path if "site-packages" not in p] + site.getsitepackages()
+    sys.path = [p for p in sys.path if not p.endswith(("site-packages", "gpu-packages"))] + \
+        ([packages] if packages else site.getsitepackages())
     try:
         def emit(kind, value):
             connection.send((kind, value))
         # A Windows file lock also prevents two app instances loading models together.
         import msvcrt
+        ROOT.mkdir(parents=True, exist_ok=True)
         with (ROOT / ".model.lock").open("a+b") as lock:
             if lock.tell() == 0:
                 lock.write(b"0")
@@ -74,21 +89,22 @@ def run_job(operation, payload, emit, cancel, target=model_worker, finish=None):
     """Deliver completion only after the process (including all model memory) exits.
 
     `cancel` aborts and discards; `finish` (used by live transcription) asks the worker to wrap up and still return."""
-    executable = ROOT / worker_environment(operation, payload) / "Scripts" / "pythonw.exe"
+    executable, packages = worker_python(operation, payload)
     if not executable.exists():
         raise RuntimeError("실행 환경이 없습니다. setup.cmd를 실행해 주세요.")
     # A Windows venv python.exe is a redirector that re-launches the base interpreter as a grandchild, so
     # multiprocessing's duplicated Event handles never reach it (bpo-35797). Launch the base interpreter
     # directly and let __PYVENV_LAUNCHER__ select the target venv, exactly as multiprocessing does itself.
-    mp.set_executable(getattr(sys, "_base_executable", sys.executable))
+    mp.set_executable(str(executable) if packages else getattr(sys, "_base_executable", sys.executable))
     context = mp.get_context("spawn")
     receive, send = context.Pipe(duplex=False)
     stop = context.Event()
     soft = context.Event()
-    process = context.Process(target=target, args=(send, stop, operation, payload, soft))
+    process = context.Process(target=target, args=(send, stop, operation, payload, soft, packages and str(packages)))
     terminal = None
     cancel_at = None
-    os.environ["__PYVENV_LAUNCHER__"] = str(executable)
+    if not packages:
+        os.environ["__PYVENV_LAUNCHER__"] = str(executable)
     try:
         process.start()
     finally:

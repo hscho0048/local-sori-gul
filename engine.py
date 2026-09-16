@@ -17,7 +17,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent
+CODE = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("SORIGUL_HOME") or CODE)  # models/, tools/, diagnostics/ (installed app: %LOCALAPPDATA%\Sorigul)
 RATE = 16000
 EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg", ".opus", ".wma", ".mp4"}
 
@@ -60,10 +61,11 @@ SILENCE_RMS = 64  # int16 units (about -54 dBFS); quieter segments are not sent 
 
 
 def ffmpeg_path(ffmpeg=None):
-    executable = Path(ffmpeg) if ffmpeg else ROOT / "tools" / "ffmpeg.exe"
-    if not executable.is_file():
-        raise RuntimeError("오디오 디코더가 없습니다. setup.cmd를 실행해 주세요.")
-    return executable
+    """Explicit path, else the data dir's tools/ffmpeg.exe, else the copy bundled next to this file."""
+    for executable in [Path(ffmpeg)] if ffmpeg else [ROOT / "tools" / "ffmpeg.exe", CODE / "tools" / "ffmpeg.exe"]:
+        if executable.is_file():
+            return executable
+    raise RuntimeError("오디오 디코더가 없습니다. setup.cmd를 실행해 주세요.")
 
 
 def audio_devices(ffmpeg=None):
@@ -109,9 +111,7 @@ def decode_audio(path, target, cancel, ffmpeg=None):
     path = Path(path).resolve()
     if not path.is_file() or path.suffix.lower() not in EXTENSIONS:
         raise ValueError("지원하는 로컬 오디오 파일을 선택해 주세요.")
-    executable = Path(ffmpeg) if ffmpeg else ROOT / "tools" / "ffmpeg.exe"
-    if not executable.is_file():
-        raise RuntimeError("오디오 디코더가 없습니다. setup.cmd를 실행해 주세요.")
+    executable = ffmpeg_path(ffmpeg)
     command = [str(executable), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
                "-protocol_whitelist", "file,pipe", "-i", str(path), "-map", "0:a:0",
                "-vn", "-ac", "1", "-ar", str(RATE), "-f", "s16le", str(target)]
