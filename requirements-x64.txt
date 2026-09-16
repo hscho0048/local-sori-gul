@@ -2,5 +2,5 @@
 onnxruntime-openvino==1.24.1
 openvino==2026.0.0
 onnx==1.22.0
-numpy==2.5.3
+numpy==2.4.6  # openvino 2026.0.0 requires numpy<2.5
 transformers==4.57.6

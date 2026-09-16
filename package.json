@@ -5,7 +5,10 @@
     "build": "node scripts/build-tauri-assets.cjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "bundle:python": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-python-bundle.ps1",
+    "tauri:build:arm64": "npm run bundle:python -- arm64 && tauri build --target aarch64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.arm64.conf.json",
+    "tauri:build:x64": "npm run bundle:python -- x64 && tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.x64.conf.json"
   },
   "dependencies": { "react": "18.3.1", "react-dom": "18.3.1" },
   "devDependencies": { "@babel/standalone": "7.29.0", "@tauri-apps/cli": "2.11.0" }
