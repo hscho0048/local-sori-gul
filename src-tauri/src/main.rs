@@ -1,11 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 struct Bridge {
     child: Mutex<Option<Child>>,
@@ -18,16 +22,31 @@ fn bridge(state: tauri::State<Bridge>) -> (String, String) {
     (state.url.clone(), state.token.clone())
 }
 
+/// (pythonw.exe, working dir with server.py, SORIGUL_HOME). Debug: the repo's .venv and data, so dev data keeps
+/// working. Release: the embeddable Python bundled as the `python` resource (resource dir = the exe's dir on
+/// Windows) and %LOCALAPPDATA%\Sorigul for models, library and the model lock.
+fn bridge_paths() -> (PathBuf, PathBuf, PathBuf) {
+    if cfg!(debug_assertions) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+        (root.join(".venv").join("Scripts").join("pythonw.exe"), root.clone(), root)
+    } else {
+        let python = std::env::current_exe().expect("no exe path").parent().unwrap().join("python");
+        let home = PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA is not set")).join("Sorigul");
+        (python.join("pythonw.exe"), python, home)
+    }
+}
+
 fn spawn_bridge() -> Bridge {
-    // ponytail: dev layout only (venv + server.py next to src-tauri); bundle python and the backend for a release build.
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
-    let mut child = Command::new(root.join(".venv").join("Scripts").join("pythonw.exe"))
+    let (python, cwd, home) = bridge_paths();
+    std::fs::create_dir_all(&home).expect("cannot create the data folder");
+    let mut child = Command::new(&python)
         .arg("server.py")
-        .current_dir(&root)
+        .current_dir(&cwd)
+        .env("SORIGUL_HOME", &home)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .expect(".venv is missing: run setup.cmd first");
+        .unwrap_or_else(|e| panic!("cannot start {}: {e} (dev: run setup.cmd first)", python.display()));
     let mut line = String::new();
     BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).expect("bridge did not start");
     let parts: Vec<&str> = line.split_whitespace().collect();
@@ -54,11 +73,52 @@ fn stop_bridge(state: &Bridge) {
     let _ = child.wait();
 }
 
+fn show_main(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        let _ = app.emit("toggle-recording", ());
+                    }
+                })
+                .build(),
+        )
         .manage(spawn_bridge())
         .invoke_handler(tauri::generate_handler![bridge])
+        .setup(|app| {
+            // ponytail: if another program owns Ctrl+Shift+R the shortcut is just unavailable (tray still works);
+            // add a user-chosen binding if conflicts get reported.
+            if let Err(error) = app.global_shortcut().register("ctrl+shift+r") {
+                eprintln!("Ctrl+Shift+R unavailable: {error}");
+            }
+            let open = MenuItem::with_id(app, "open", "열기", true, None::<&str>)?;
+            let record = MenuItem::with_id(app, "record", "녹음 시작", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
+            TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("소리글")
+                .menu(&Menu::with_items(app, &[&open, &record, &quit])?)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "open" => show_main(app),
+                    "record" => {
+                        let _ = app.emit("toggle-recording", ());
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .build(app)?;
+            Ok(())
+        })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { .. } = event {
                 // ponytail: the hidden window blocks the event loop while a recording finishes (<= 35 s);
