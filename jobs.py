@@ -60,10 +60,13 @@ def model_worker(connection, cancelled, operation, payload, finish=None, package
             elif operation == "listen":
                 import tempfile
                 from engine import load_whisper
+                source = payload.get("source", "mic")
+                producer = payload["mic"] if source == "mic" else \
+                    [sys.executable, str(CODE / "loopback.py")] + (["--mic", payload["mic"]] if source == "both" else [])
                 wav = Path(tempfile.gettempdir()) / f"audio2text-live-{int(time.time())}.wav"
                 try:
                     result = load_whisper(payload.get("device", "npu"), emit, cancelled).listen(
-                        payload["mic"], finish, prefix=payload.get("prefix", ""), wav_path=wav)
+                        producer, finish, prefix=payload.get("prefix", ""), wav_path=wav)
                     if payload.get("note_id") and wav.exists() and wav.stat().st_size > 44:
                         from library import Library
                         library = Library()
@@ -73,6 +76,10 @@ def model_worker(connection, cancelled, operation, payload, finish=None, package
                             library.close()
                 finally:
                     wav.unlink(missing_ok=True)
+            elif operation == "setup":
+                import setup_assets
+                setup_assets.main(emit, whisper_gpu=True)
+                result = None
             else:
                 raise ValueError("Unknown operation")
             emit("result", result)

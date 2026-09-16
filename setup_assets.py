@@ -37,13 +37,33 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def download(url, target, sha=None):
+def log(kind, value):
+    """CLI reporter; the app passes the job's emit instead."""
+    if kind == "file":
+        print(f"Downloading: {value}", flush=True)
+    elif kind == "progress":
+        print(f"  {value[0]:.0f}% ({value[1]} MiB)", flush=True)
+    elif kind in ("ready", "stage"):
+        print(f"Ready: {value}" if kind == "ready" else value, flush=True)
+
+
+def required_files():
+    """Model files (relative to models/) the app needs on this machine; the NPU bundle only exists for ARM64."""
+    from diarize import FRAMES
+    names = ["tokenizer.json", "generation_config.json", "preprocessor_config.json",
+             f"speaker/speaker_static_{FRAMES}.onnx",
+             "whisper-gpu/encoder_static_fp16.onnx", "whisper-gpu/decoder_model_merged_fp16.onnx"]
+    return (list(FILES) if platform.machine() == "ARM64" else []) + names
+
+
+def download(url, target, sha=None, emit=log):
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists() and (not sha or digest(target) == sha):
-        print(f"Ready: {target.relative_to(ROOT)}", flush=True)
+        emit("ready", target.relative_to(ROOT).as_posix())
         return
     partial = target.with_suffix(target.suffix + ".part")
-    print(f"Downloading: {target.relative_to(ROOT)}", flush=True)
+    name = target.relative_to(ROOT).as_posix()
+    emit("file", name)
     offset = partial.stat().st_size if partial.exists() else 0
     headers = {"User-Agent": "audio2text-local/1.0"}
     if offset:
@@ -60,31 +80,33 @@ def download(url, target, sha=None):
                 out.write(chunk)
                 received += len(chunk)
                 progress = received * 100 // size if size else 0
-                if progress // 10 != last:
-                    print(f"  {progress}% ({received // 1048576} MiB)", flush=True)
-                    last = progress // 10
+                if progress != last:
+                    emit("progress", (progress, received // 1048576, size // 1048576))
+                    last = progress
         if size and received != size:
             raise RuntimeError(f"Incomplete download: {target.name}")
     if sha and digest(partial) != sha:
         partial.unlink()
         raise RuntimeError(f"Checksum mismatch: {target.name}; run setup again.")
     partial.replace(target)
+    emit("ready", name)
 
 
-def setup_whisper_gpu():
+def setup_whisper_gpu(emit=log):
     import onnx
     folder = ROOT / "models" / "whisper-gpu"
     target = folder / "encoder_static_fp16.onnx"
     decoder = "decoder_model_merged_fp16.onnx"
-    download(f"{GPU_BASE}/{decoder}", folder / decoder, GPU_FILES[decoder])
+    download(f"{GPU_BASE}/{decoder}", folder / decoder, GPU_FILES[decoder], emit=emit)
     if target.is_file():
         model = onnx.load(str(target), load_external_data=False)
         shape = [d.dim_value for d in model.graph.input[0].type.tensor_type.shape.dim]
         if shape == [1, 128, 3000]:
-            print("Ready: GPU encoder with static audio shape", flush=True)
+            emit("ready", "whisper-gpu/encoder_static_fp16.onnx")
             return
     source = folder / "encoder_model_fp16.onnx"
-    download(f"{GPU_BASE}/{source.name}", source, GPU_FILES[source.name])
+    download(f"{GPU_BASE}/{source.name}", source, GPU_FILES[source.name], emit=emit)
+    emit("stage", "GPU 인코더를 고정 형태로 변환하는 중…")
     model = onnx.load(str(source))
     for value, shape in [(model.graph.input[0], (1, 128, 3000)), (model.graph.output[0], (1, 1500, 1280))]:
         for dim, size in zip(value.type.tensor_type.shape.dim, shape):
@@ -92,35 +114,42 @@ def setup_whisper_gpu():
     partial = target.with_suffix(".onnx.part")
     onnx.save(model, str(partial))
     partial.replace(target)
-    print("Ready: GPU encoder with static audio shape", flush=True)
+    emit("ready", "whisper-gpu/encoder_static_fp16.onnx")
 
 
-def main():
+def main(emit=log, whisper_gpu=False):
+    """Every model this machine needs, then (with whisper_gpu) the static-shape encoder. Files already present with
+    the right checksum are skipped, so an interrupted first run resumes."""
+    if platform.machine() == "ARM64":
+        for name, sha in FILES.items():
+            download(f"{BASE}/{name}", ROOT / "models" / name, sha, emit)
+    for name in ("tokenizer.json", "generation_config.json", "preprocessor_config.json"):
+        download(f"https://huggingface.co/openai/whisper-large-v3-turbo/resolve/{TOKENIZER_REV}/{name}", ROOT / "models" / name, emit=emit)
+    from diarize import FRAMES, MODEL_FILE, static_model
+    download(SPEAKER_URL, ROOT / "models" / "speaker" / MODEL_FILE, SPEAKER_SHA, emit)
+    static = ROOT / "models" / "speaker" / f"speaker_static_{FRAMES}.onnx"
+    if not static.is_file():
+        emit("stage", "화자 분리 모델 고정 형태로 변환 중… (처음 한 번)")
+        static_model(ROOT / "models" / "speaker" / MODEL_FILE, static)  # both venvs read this fixed-shape copy
+    if not (CODE / "tools" / "ffmpeg.exe").is_file():  # the installed app bundles ffmpeg
+        wheel = ROOT / "tools" / "ffmpeg.whl"
+        download("https://files.pythonhosted.org/packages/2c/c6/fa760e12a2483469e2bf5058c5faff664acf66cadb4df2ad6205b016a73d/imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl", wheel,
+                 "02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a", emit=emit)
+        with zipfile.ZipFile(wheel) as archive:
+            exe = next(n for n in archive.namelist() if n.endswith(".exe"))
+            (ROOT / "tools" / "ffmpeg.exe").write_bytes(archive.read(exe))
+            for name in archive.namelist():
+                if "license" in name.lower() and not name.endswith("/"):
+                    (ROOT / "tools" / Path(name).name).write_bytes(archive.read(name))
+    if whisper_gpu:
+        setup_whisper_gpu(emit)
+    emit("stage", "Setup complete. Inference needs no network.")
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--whisper-gpu", action="store_true")
     if parser.parse_args().whisper_gpu:
         setup_whisper_gpu()
-        return
-    for name, sha in FILES.items():
-        download(f"{BASE}/{name}", ROOT / "models" / name, sha)
-    for name in ("tokenizer.json", "generation_config.json", "preprocessor_config.json"):
-        download(f"https://huggingface.co/openai/whisper-large-v3-turbo/resolve/{TOKENIZER_REV}/{name}", ROOT / "models" / name)
-    from diarize import FRAMES, MODEL_FILE, static_model
-    download(SPEAKER_URL, ROOT / "models" / "speaker" / MODEL_FILE, SPEAKER_SHA)
-    static = ROOT / "models" / "speaker" / f"speaker_static_{FRAMES}.onnx"
-    if not static.is_file():
-        static_model(ROOT / "models" / "speaker" / MODEL_FILE, static)  # both venvs read this fixed-shape copy
-    wheel = ROOT / "tools" / "ffmpeg.whl"
-    download("https://files.pythonhosted.org/packages/2c/c6/fa760e12a2483469e2bf5058c5faff664acf66cadb4df2ad6205b016a73d/imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl", wheel,
-             "02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a")
-    with zipfile.ZipFile(wheel) as archive:
-        exe = next(n for n in archive.namelist() if n.endswith(".exe"))
-        (ROOT / "tools" / "ffmpeg.exe").write_bytes(archive.read(exe))
-        for name in archive.namelist():
-            if "license" in name.lower() and not name.endswith("/"):
-                (ROOT / "tools" / Path(name).name).write_bytes(archive.read(name))
-    print("Setup complete. Run start.cmd. Inference needs no network.", flush=True)
-
-
-if __name__ == "__main__":
-    main()
+    else:
+        main()

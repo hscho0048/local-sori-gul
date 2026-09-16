@@ -75,7 +75,13 @@ def audio_devices(ffmpeg=None):
     return re.findall(r'"([^"]+)" \(audio\)', listing.stderr)
 
 
-def split_point(pcm, min_seconds=6, max_seconds=20):
+def mic_command(device, ffmpeg=None):
+    """ffmpeg streaming a DirectShow microphone as 16 kHz mono s16le on stdout."""
+    return [str(ffmpeg_path(ffmpeg)), "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "dshow",
+            "-audio_buffer_size", "50", "-i", f"audio={device}", "-ac", "1", "-ar", str(RATE), "-f", "s16le", "pipe:1"]
+
+
+def split_point(pcm,min_seconds=6, max_seconds=20):
     """Where to cut a growing live buffer: the last quiet 200 ms window after min_seconds, the quietest window once
     max_seconds is reached, or None while the buffer should keep growing. Same energy rule as chunks()."""
     if len(pcm) < min_seconds * RATE:
@@ -141,8 +147,6 @@ class WhisperNPU:
         if platform.machine().lower() != "arm64":
             raise RuntimeError("Windows ARM64 Python으로 실행해야 NPU를 사용할 수 있습니다. setup.cmd를 실행해 주세요.")
         import onnxruntime as ort
-        from tokenizers import Tokenizer
-        from transformers import WhisperFeatureExtractor
 
         self.emit, self.cancel = emit, cancel
         self.model_dir = Path(model_dir) if model_dir else ROOT / "models"
@@ -177,6 +181,13 @@ class WhisperNPU:
         self.encoder, self.decoder = self.sessions
         self.inputs = {item.name: item for item in self.decoder.get_inputs()}
         self.limit = self.inputs["attention_mask"].shape[-1]
+        self.load_text()
+        emit("ready", "Snapdragon NPU · QNN HTP · CPU 대체 실행 차단")
+
+    def load_text(self):
+        """Tokenizer, feature extractor and Korean prompt, shared by every device."""
+        from tokenizers import Tokenizer
+        from transformers import WhisperFeatureExtractor
         self.tokenizer = Tokenizer.from_file(str(self.model_dir / "tokenizer.json"))
         self.extractor = WhisperFeatureExtractor.from_pretrained(str(self.model_dir), local_files_only=True)
         self.generation = json.loads((self.model_dir / "generation_config.json").read_text("utf-8"))
@@ -186,7 +197,6 @@ class WhisperNPU:
         if None in self.prompt or self.eos is None:
             raise RuntimeError("한국어 Whisper 토크나이저 구성이 올바르지 않습니다.")
         self.suppress = self.generation.get("suppress_tokens", [])
-        emit("ready", "Snapdragon NPU · QNN HTP · CPU 대체 실행 차단")
 
     def infer(self, audio, preview):
         check_cancel(self.cancel)
@@ -269,12 +279,13 @@ class WhisperNPU:
             finally:
                 pcm._mmap.close()
 
-    def listen(self, device, stop, prefix="", wav_path=None, ffmpeg=None):
-        """Live transcription: ffmpeg streams the microphone as 16 kHz PCM, the buffer is cut at pauses (split_point)
-        and each segment is transcribed as soon as it closes. `stop` ends the recording and transcribes the tail;
-        `self.cancel` aborts. The whole recording is also written to wav_path so nothing is lost."""
-        command = [str(ffmpeg_path(ffmpeg)), "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "dshow",
-                   "-audio_buffer_size", "50", "-i", f"audio={device}", "-ac", "1", "-ar", str(RATE), "-f", "s16le", "pipe:1"]
+    def listen(self, source, stop, prefix="", wav_path=None, ffmpeg=None):
+        """Live transcription: `source` is a microphone name (streamed by ffmpeg) or a producer command writing 16 kHz
+        mono s16le to stdout (loopback.py). The buffer is cut at pauses (split_point) and each segment is transcribed
+        as soon as it closes. `stop` ends the recording and transcribes the tail; `self.cancel` aborts. The whole
+        recording is also written to wav_path so nothing is lost."""
+        command = mic_command(source, ffmpeg) if isinstance(source, str) else source
+        label = source if isinstance(source, str) else "시스템 소리"
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         recording = wave.open(str(wav_path), "wb") if wav_path else None
@@ -316,7 +327,7 @@ class WhisperNPU:
             self.emit("stage", f"🎙 녹음 중 · {seconds:.0f}초")
 
         try:
-            self.emit("stage", f"🎙 녹음 중 · {device}")
+            self.emit("stage", f"🎙 녹음 중 · {label}")
             while not stop.is_set():
                 check_cancel(self.cancel)
                 with lock:
@@ -363,19 +374,10 @@ class WhisperGPU(WhisperNPU):
         if platform.machine().lower() != "arm64":
             raise RuntimeError("Windows ARM64 Python으로 실행해야 합니다. setup.cmd를 실행해 주세요.")
         import onnxruntime as ort
-        from tokenizers import Tokenizer
-        from transformers import WhisperFeatureExtractor
 
         self.emit, self.cancel = emit, cancel
         self.model_dir = Path(model_dir) if model_dir else ROOT / "models"
-        gpu_dir = self.model_dir / "whisper-gpu"
-        encoder_file = gpu_dir / "encoder_static_fp16.onnx"
-        decoder_file = gpu_dir / "decoder_model_merged_fp16.onnx"
-        if not encoder_file.is_file() or not decoder_file.is_file():
-            raise RuntimeError("GPU용 Whisper 모델이 없습니다. setup.cmd를 실행해 주세요.")
-        for name in ("tokenizer.json", "preprocessor_config.json", "generation_config.json"):
-            if not (self.model_dir / name).is_file():
-                raise RuntimeError(f"모델 파일이 없습니다: {name}\n처음 한 번 setup.cmd를 실행해 주세요.")
+        encoder_file, decoder_file = self.model_files()
         # QNN 1.22's GPU backend cannot finalize this encoder. Keep that runtime for the compiled NPU bundle,
         # and run GPU jobs in the separate ORT + QNN plugin environment installed by setup.cmd.
         try:
@@ -419,16 +421,18 @@ class WhisperGPU(WhisperNPU):
         self.decoder_inputs = [item.name for item in self.decoder.get_inputs()]
         self.decoder_outputs = [item.name for item in self.decoder.get_outputs()]
         self.limit = self.LIMIT
-        self.tokenizer = Tokenizer.from_file(str(self.model_dir / "tokenizer.json"))
-        self.extractor = WhisperFeatureExtractor.from_pretrained(str(self.model_dir), local_files_only=True)
-        self.generation = json.loads((self.model_dir / "generation_config.json").read_text("utf-8"))
-        self.prompt = [self.tokenizer.token_to_id(t) for t in
-                       ("<|startoftranscript|>", "<|ko|>", "<|transcribe|>", "<|notimestamps|>")]
-        self.eos = self.tokenizer.token_to_id("<|endoftext|>")
-        if None in self.prompt or self.eos is None:
-            raise RuntimeError("한국어 Whisper 토크나이저 구성이 올바르지 않습니다.")
-        self.suppress = self.generation.get("suppress_tokens", [])
+        self.load_text()
         emit("ready", "Adreno GPU (encoder) · CPU (decoder) · QNN GPU 백엔드")
+
+    def model_files(self):
+        gpu_dir = self.model_dir / "whisper-gpu"
+        encoder_file, decoder_file = gpu_dir / "encoder_static_fp16.onnx", gpu_dir / "decoder_model_merged_fp16.onnx"
+        if not encoder_file.is_file() or not decoder_file.is_file():
+            raise RuntimeError("GPU용 Whisper 모델이 없습니다. setup.cmd를 실행해 주세요.")
+        for name in ("tokenizer.json", "preprocessor_config.json", "generation_config.json"):
+            if not (self.model_dir / name).is_file():
+                raise RuntimeError(f"모델 파일이 없습니다: {name}\n처음 한 번 setup.cmd를 실행해 주세요.")
+        return encoder_file, decoder_file
 
     def infer(self, audio, preview):
         check_cancel(self.cancel)
@@ -463,13 +467,63 @@ class WhisperGPU(WhisperNPU):
         return self.tokenizer.decode(generated, skip_special_tokens=True).strip(), True
 
 
+def openvino_device(available=None):
+    """OpenVINO target for the encoder: GPU, else NPU, else CPU, as OpenVINO reports them ('GPU.0' counts as GPU)."""
+    if available is None:
+        import openvino
+        available = openvino.Core().available_devices
+    kinds = {name.split(".")[0] for name in available}
+    return next((kind for kind in ("GPU", "NPU") if kind in kinds), "CPU")
+
+
+class WhisperCPU(WhisperGPU):
+    """WhisperGPU's model files and infer() without QNN, for any x64 or arm64 PC: both sessions on the CPU ('cpu'),
+    or the encoder on Intel graphics through the OpenVINO execution provider ('intel')."""
+
+    def __init__(self, emit, cancel, model_dir=None, profile=False, intel=False):
+        self.emit, self.cancel = emit, cancel
+        self.model_dir = Path(model_dir) if model_dir else ROOT / "models"
+        encoder_file, decoder_file = self.model_files()
+        encoder_providers, label = ["CPUExecutionProvider"], "CPU"
+        if intel:
+            import openvino
+            # onnxruntime-openvino loads openvino.dll from PATH, which the pip package does not set up.
+            libs = Path(openvino.__file__).parent / "libs"
+            os.environ["PATH"] = f"{libs};{os.environ.get('PATH', '')}"
+            self.dll_directory = os.add_dll_directory(str(libs)) if libs.is_dir() else None
+            target = openvino_device()
+            encoder_providers = [("OpenVINOExecutionProvider", {"device_type": target}), "CPUExecutionProvider"]
+            label = f"인텔 {target} (OpenVINO) · CPU (decoder)"
+        import onnxruntime as ort
+        ort.disable_telemetry_events()
+        check_cancel(cancel)
+        emit("stage", "encoder 모델을 불러오는 중… (처음은 수 분)" if intel else "encoder 모델을 불러오는 중…")
+        self.encoder = ort.InferenceSession(str(encoder_file), sess_options=ort.SessionOptions(), providers=encoder_providers)
+        if intel and "OpenVINOExecutionProvider" not in self.encoder.get_providers():
+            raise RuntimeError("OpenVINO 세션 생성에 실패했습니다. 인텔 그래픽 드라이버를 확인하거나 CPU를 선택해 주세요.")
+        self.encoder_dtype = np.float16 if self.encoder.get_inputs()[0].type == "tensor(float16)" else np.float32
+        check_cancel(cancel)
+        emit("stage", "decoder 모델을 불러오는 중…")
+        self.decoder = ort.InferenceSession(str(decoder_file), sess_options=ort.SessionOptions(),
+                                            providers=["CPUExecutionProvider"])
+        self.sessions = [self.encoder, self.decoder]
+        self.decoder_inputs = [item.name for item in self.decoder.get_inputs()]
+        self.decoder_outputs = [item.name for item in self.decoder.get_outputs()]
+        self.limit = self.LIMIT
+        self.load_text()
+        emit("ready", label)
+
+
 def load_whisper(device, emit, cancel, **options):
-    """'npu' = pre-compiled Hexagon bundle (default); 'gpu' = standard ONNX export on the Adreno GPU via QNN."""
+    """'npu' = pre-compiled Hexagon bundle; 'gpu' = standard ONNX export on the Adreno GPU via QNN;
+    'cpu' / 'intel' = the same export on the CPU / Intel graphics (OpenVINO)."""
     if device == "gpu":
         return WhisperGPU(emit, cancel, **options)
     if device == "npu":
         return WhisperNPU(emit, cancel, **options)
-    raise ValueError("device must be 'npu' or 'gpu'")
+    if device in ("cpu", "intel"):
+        return WhisperCPU(emit, cancel, intel=device == "intel", **options)
+    raise ValueError("device must be 'npu', 'gpu', 'cpu' or 'intel'")
 
 
 if __name__ == "__main__":
@@ -478,7 +532,7 @@ if __name__ == "__main__":
     parser.add_argument("audio", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--profile", action="store_true")
-    parser.add_argument("--device", choices=("npu", "gpu"), default="npu")
+    parser.add_argument("--device", choices=("npu", "gpu", "cpu", "intel"), default="npu")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Output already exists; choose a new filename.")
