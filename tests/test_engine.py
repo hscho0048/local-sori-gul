@@ -424,5 +424,24 @@ class SetupAssetTests(unittest.TestCase):
         self.assertIn("encoder/model.bin", arm)
 
 
+class LoopbackTests(unittest.TestCase):
+    def test_mix_averages_the_overlap_and_keeps_the_rest(self):
+        from loopback import mix
+        a = np.array([30000, 30000, -30000, 4], dtype=np.int16)
+        b = np.array([30000, -30000, -30000], dtype=np.int16)
+        mixed, rest_a, rest_b = mix(a, b)
+        self.assertEqual(mixed.tolist(), [30000, 0, -30000])
+        self.assertEqual(rest_a.tolist(), [4])
+        self.assertEqual(rest_b.tolist(), [])
+
+    def test_pad_fills_silence_only_when_the_loopback_falls_behind(self):
+        from loopback import pad
+        chunk = np.ones(10, dtype=np.int16)
+        self.assertEqual(len(pad(chunk, produced=100, expected=105, slack=20)), 10)   # jitter: untouched
+        padded = pad(np.zeros(0, dtype=np.int16), produced=100, expected=200, slack=20)
+        self.assertEqual(len(padded), 100)                                             # idle output: silence
+        self.assertFalse(padded.any())
+
+
 if __name__ == "__main__":
     unittest.main()
