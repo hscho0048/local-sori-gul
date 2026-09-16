@@ -40,6 +40,7 @@ fn lock_instance(home: &std::path::Path) -> Option<std::fs::File> {
 #[link(name = "user32")]
 extern "system" {
     fn FindWindowW(class: *const u16, title: *const u16) -> isize;
+    fn IsIconic(window: isize) -> i32;
     fn ShowWindow(window: isize, command: i32) -> i32;
     fn SetForegroundWindow(window: isize) -> i32;
 }
@@ -52,7 +53,8 @@ fn focus_running_instance() {
     unsafe {
         let window = FindWindowW(std::ptr::null(), title.as_ptr());
         if window != 0 {
-            ShowWindow(window, 9); // SW_RESTORE
+            // SW_RESTORE only when minimized: on a maximized window it would un-maximize it.
+            ShowWindow(window, if IsIconic(window) != 0 { 9 } else { 5 }); // SW_RESTORE : SW_SHOW
             SetForegroundWindow(window);
         }
     }
