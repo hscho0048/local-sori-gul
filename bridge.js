@@ -30,7 +30,7 @@
     createFolder: (name) => call('POST', '/folders', { name }),
     deleteFolder: (id) => call('DELETE', `/folders/${id}`),
     mics: () => call('GET', '/mics'),
-    transcribe: (path, device) => call('POST', '/transcribe', { path, device }),
+    transcribe: (path, device, speakers = true) => call('POST', '/transcribe', { path, device, speakers }),
     devices: () => call('GET', '/devices'),
     setup: () => call('POST', '/setup', {}),
     cancelJob: () => call('POST', '/job/cancel', {}),

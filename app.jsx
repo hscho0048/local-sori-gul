@@ -53,6 +53,7 @@ const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
   const [step, setStep] = React.useState('choose');
   const [device, setDevice] = React.useState('');
   const [source, setSource] = React.useState('mic');
+  const [speakers, setSpeakers] = React.useState(true);
   const [mics, setMics] = React.useState(null); // null = not loaded yet
   const [mic, setMic] = React.useState('');
   const [errorMsg, setErrorMsg] = React.useState('');
@@ -66,6 +67,7 @@ const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
     setMics(null);
     setMic('');
     setSource(loadLive().source || 'mic');
+    setSpeakers(loadLive().speakers !== false);
   }, [open]);
 
   // Devices arrive from GET /devices (possibly after the chooser opened); keep the current pick if it's still
@@ -98,8 +100,8 @@ const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
     setErrorMsg('');
     window.SoriBridge.pickAudio().then((path) => {
       if (!path) return;
-      saveLive({ device });
-      window.SoriBridge.transcribe(path, device).then(
+      saveLive({ device, speakers });
+      window.SoriBridge.transcribe(path, device, speakers).then(
         ({ note_id }) => { onClose(); startPolling(); openNote(note_id); },
         (err) => setErrorMsg(errorText(err)),
       );
@@ -145,10 +147,16 @@ const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
           </select>
         </label>
         {step === 'choose' && (
-          <div className="modal-actions">
-            <button className="modal-choice" disabled={busy || !device} onClick={pickFile}>오디오 전사…</button>
-            <button className="modal-choice" disabled={busy || !device} onClick={goLive}>실시간 전사</button>
-          </div>
+          <React.Fragment>
+            <label className="modal-check">
+              <input type="checkbox" checked={speakers} onChange={(e) => setSpeakers(e.target.checked)} />
+              <span>화자 분리</span>
+            </label>
+            <div className="modal-actions">
+              <button className="modal-choice" disabled={busy || !device} onClick={pickFile}>오디오 전사…</button>
+              <button className="modal-choice" disabled={busy || !device} onClick={goLive}>실시간 전사</button>
+            </div>
+          </React.Fragment>
         )}
         {step === 'mic' && (
           <div className="modal-mic">
@@ -987,7 +995,7 @@ const App = () => {
     if (!queue.length || !devices || setupNeeded || job.state === 'running' || startingRef.current) return;
     startingRef.current = true;
     const path = queue[0];
-    window.SoriBridge.transcribe(path, pickDevice(devices, loadLive().device)).then(
+    window.SoriBridge.transcribe(path, pickDevice(devices, loadLive().device), loadLive().speakers !== false).then(
       ({ note_id }) => {
         startingRef.current = false;
         setQueue((q) => q.slice(1));

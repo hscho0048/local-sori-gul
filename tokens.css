@@ -97,6 +97,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .modal-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-secondary); }
 .modal-field select { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
 .modal-actions { display: flex; flex-direction: column; gap: 10px; }
+.modal-check { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
 .modal-choice { padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); cursor: pointer; font-size: 15px; font-weight: 600; }
 .modal-choice:hover { background: var(--hover); }
 .modal-choice:disabled { opacity: 0.5; cursor: default; }
