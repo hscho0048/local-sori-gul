@@ -6,11 +6,13 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import threading
 import time
 
 ROOT = Path(os.environ.get("SORIGUL_HOME") or Path(__file__).resolve().parent)
 LIBRARY = ROOT / "library"
 DB = LIBRARY / "notes.db"
+SETUP_LOCK = threading.Lock()
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS folders (
     id INTEGER PRIMARY KEY,
@@ -40,11 +42,19 @@ ENDINGS = ("니다", "어요", "아요", "해요", "했다", "한다", "하고",
 def connect(path=DB):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA journal_mode = WAL")
-    connection.executescript(SCHEMA)
-    return connection
+    try:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        # A new database's first WAL switch + schema fail with "database is locked" when the bridge's request threads
+        # (an installed app's first page load) all create it at once; SQLite's busy timeout does not cover that.
+        # ponytail: in-process lock only; the model worker opens the database after the bridge has created it.
+        with SETUP_LOCK:
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.executescript(SCHEMA)
+        return connection
+    except BaseException:
+        connection.close()
+        raise
 
 
 def keywords(text, limit=3):

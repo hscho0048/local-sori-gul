@@ -58,11 +58,13 @@ def required_files():
 
 def download(url, target, sha=None, emit=log):
     target.parent.mkdir(parents=True, exist_ok=True)
+    name = target.relative_to(ROOT).as_posix()
+    if target.exists() and sha:
+        emit("stage", f"{name} 확인 중…")  # hashing a GB-sized model takes a few seconds
     if target.exists() and (not sha or digest(target) == sha):
-        emit("ready", target.relative_to(ROOT).as_posix())
+        emit("ready", name)
         return
     partial = target.with_suffix(target.suffix + ".part")
-    name = target.relative_to(ROOT).as_posix()
     emit("file", name)
     offset = partial.stat().st_size if partial.exists() else 0
     headers = {"User-Agent": "audio2text-local/1.0"}

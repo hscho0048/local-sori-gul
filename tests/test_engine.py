@@ -413,7 +413,7 @@ class SetupAssetTests(unittest.TestCase):
             events = []
             setup_assets.download("http://invalid.example/a", target, hashlib.sha256(b"abc").hexdigest(),
                                   emit=lambda kind, value: events.append((kind, value)))
-            self.assertEqual(events, [("ready", "models/a.bin")])
+            self.assertEqual(events, [("stage", "models/a.bin 확인 중…"), ("ready", "models/a.bin")])
 
     def test_required_files_include_the_npu_bundle_only_on_arm64(self):
         import setup_assets

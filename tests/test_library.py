@@ -73,6 +73,26 @@ class LibraryTests(unittest.TestCase):
         self.assertNotIn("화자", keywords(text, 10))
         self.assertEqual(keywords(""), [])
 
+    def test_concurrent_first_open_of_a_new_database(self):
+        # an installed app's first page load opens several connections at once on a database that does not exist yet
+        import threading
+        errors = []
+
+        def open_close(path):
+            try:
+                Library(path).close()
+            except Exception as error:
+                errors.append(error)
+        for _ in range(30):
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+                threads = [threading.Thread(target=open_close, args=(Path(folder) / "library" / "notes.db",))
+                           for _ in range(5)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+        self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()
