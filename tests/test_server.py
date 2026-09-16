@@ -3,6 +3,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -138,6 +139,13 @@ class ServerTests(unittest.TestCase):
         self.release.set()
         self.wait_for("done")
         self.assertEqual(self.calls[0], ("setup", {}))
+
+    def test_setup_is_refused_while_shutting_down(self):
+        server.CANCEL.set()
+        try:
+            self.assertEqual(self.request("POST", "/setup", {})[0], 503)
+        finally:
+            server.CANCEL.clear()
 
     def test_setup_progress_fields(self):
         emit = server.job_emitter("setup", None)

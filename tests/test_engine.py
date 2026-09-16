@@ -1,3 +1,4 @@
+import os
 import tempfile
 import threading
 import unittest
@@ -6,7 +7,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from engine import Cancelled, RATE, WhisperNPU, WhisperGPU, check_cancel, chunks, decode_audio
+from engine import Cancelled, RATE, ROOT, WhisperNPU, WhisperGPU, check_cancel, chunks, decode_audio
 from jobs import worker_environment
 
 
@@ -330,7 +331,7 @@ class DeviceTests(unittest.TestCase):
         stages = []
         with tempfile.TemporaryDirectory() as folder, patch.dict(sys.modules, {
                 "onnxruntime": ort, "tokenizers": tokenizers, "transformers": transformers, "openvino": openvino,
-                "onnxruntime_qnn": None}), patch("engine.os.add_dll_directory", return_value=None):
+                "onnxruntime_qnn": None}), patch("engine.os.add_dll_directory", return_value=None),                 patch.dict(os.environ):
             self.fake_models(folder)
             worker = WhisperCPU(lambda kind, value: stages.append((kind, value)), threading.Event(),
                                 model_dir=folder, intel=intel)
@@ -347,7 +348,9 @@ class DeviceTests(unittest.TestCase):
         # ponytail: mocked session only — untested on Intel hardware.
         worker, created, stages = self.load(intel=True)
         self.assertEqual(created[0].providers,
-                         [("OpenVINOExecutionProvider", {"device_type": "GPU"}), "CPUExecutionProvider"])
+                         [("OpenVINOExecutionProvider", {"device_type": "GPU",
+                                                        "cache_dir": str(ROOT / "models" / "openvino-cache")}),
+                          "CPUExecutionProvider"])
         self.assertEqual(created[1].providers, ["CPUExecutionProvider"])
         self.assertIn(("ready", "인텔 GPU (OpenVINO) · CPU (decoder)"), stages)
 
@@ -359,7 +362,7 @@ class DeviceTests(unittest.TestCase):
 
     def test_load_whisper_routes_cpu_and_intel(self):
         import engine
-        with patch("engine.WhisperCPU", side_effect=lambda *a, **k: k) as cpu:
+        with patch("engine.WhisperCPU", side_effect=lambda *a, **k: k):
             self.assertEqual(engine.load_whisper("cpu", None, None), {"intel": False})
             self.assertEqual(engine.load_whisper("intel", None, None), {"intel": True})
         with self.assertRaises(ValueError):

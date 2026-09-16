@@ -101,9 +101,9 @@ const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
       saveLive({ device });
       window.SoriBridge.transcribe(path, device).then(
         ({ note_id }) => { onClose(); startPolling(); openNote(note_id); },
-        (err) => setErrorMsg(err.message || String(err)),
+        (err) => setErrorMsg(errorText(err)),
       );
-    }, (err) => setErrorMsg(err.message || String(err)));
+    }, (err) => setErrorMsg(errorText(err)));
   };
 
   const goLive = () => {
@@ -113,7 +113,7 @@ const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
       (list) => { setMics(list); const saved = loadLive().mic; setMic(list.includes(saved) ? saved : (list[0] ?? '')); }, // default to the first mic — with exactly one
                                                              // option <select>'s onChange never fires, so
                                                              // without this `mic` stays '' and /live 400s
-      (err) => { setMics([]); setErrorMsg(err.message || String(err)); },
+      (err) => { setMics([]); setErrorMsg(errorText(err)); },
     );
   };
 
@@ -528,7 +528,7 @@ const JobPill = ({ job, queued }) => {
 };
 
 // First run: the models aren't on disk yet. Shows the setup job's per-file progress from GET /job.
-const SetupScreen = ({ job, onRetry }) => {
+const SetupScreen = ({ job, error, onRetry }) => {
   const mine = job.op === 'setup';
   const failed = mine && job.state === 'error';
   const progress = (mine && job.progress) || [];
@@ -549,7 +549,11 @@ const SetupScreen = ({ job, onRetry }) => {
         </ul>
         {mine && job.state === 'running' && <div className="job-status"><span className="job-stage">{job.stage}</span></div>}
         {failed && <div className="modal-error">{job.error}</div>}
-        {(failed || !mine) && <button className="btn btn-primary" onClick={onRetry}>{failed ? '다시 시도' : '내려받기 시작'}</button>}
+        {error && <div className="modal-error">{error}</div>}
+        {/* an ended setup job while this screen is still up means the models are still incomplete */}
+        {!(mine && job.state === 'running') && (
+          <button className="btn btn-primary" onClick={onRetry}>{mine || error ? '다시 시도' : '내려받기 시작'}</button>
+        )}
       </div>
     </div>
   );
@@ -752,6 +756,8 @@ const App = () => {
   jobRef.current = job;
   const devicesRef = React.useRef(devices);
   devicesRef.current = devices;
+  const setupNeededRef = React.useRef(setupNeeded);
+  setupNeededRef.current = setupNeeded;
   const [chooserOpen, setChooserOpen] = React.useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -819,7 +825,8 @@ const App = () => {
               // No need to chain after refresh() any more: refresh()'s success path only clears an error
               // it set itself (see errorFromRefresh above), so this message survives regardless of order.
               // A failed setup is shown on the setup screen itself (with 다시 시도), not in the banner.
-              if (j.state === 'error' && j.op !== 'setup') showError(j.error || '작업이 실패했습니다.');
+              // A user-initiated 취소 is not an error worth a banner: the pill/editor simply stop.
+              if (j.state === 'error' && j.op !== 'setup' && j.error !== '취소됐습니다.') showError(j.error || '작업이 실패했습니다.');
             }
             return j;
           });
@@ -894,7 +901,7 @@ const App = () => {
   React.useEffect(() => {
     window.SoriBridge.onDrag((type, payload) => {
       setDragging(type === 'enter' || type === 'over');
-      if (type !== 'drop') return;
+      if (type !== 'drop' || setupNeededRef.current) return; // no models yet: nothing to transcribe with
       const paths = payload.paths || [];
       const audio = paths.filter(window.SoriBridge.isAudio);
       if (audio.length) setQueue((q) => [...q, ...audio]);
@@ -932,6 +939,7 @@ const App = () => {
   // ponytail: the LivePill's "마지막 구간 전사 중…" state only appears for its own button; lift `stopping` into App if needed.
   React.useEffect(() => {
     window.SoriBridge.onToggleRecording(() => {
+      if (setupNeededRef.current) return;
       const current = jobRef.current;
       if (current.state === 'running') {
         if (current.op === 'listen') window.SoriBridge.stopLive().catch((err) => showError(errorText(err)));
@@ -1020,7 +1028,7 @@ const App = () => {
     : ((VIEWS.find(([key]) => key === view) || [])[1] || '');
 
   // After every hook above (rules of hooks): the first-run download replaces the whole dashboard.
-  if (setupNeeded) return <SetupScreen job={job} onRetry={startSetup} />;
+  if (setupNeeded) return <SetupScreen job={job} error={error} onRetry={() => { dismissError(); startSetup(); }} />;
 
   return (
     <div className={`app${sidebarCollapsed ? ' collapsed' : ''}`}>

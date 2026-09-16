@@ -81,7 +81,7 @@ def mic_command(device, ffmpeg=None):
             "-audio_buffer_size", "50", "-i", f"audio={device}", "-ac", "1", "-ar", str(RATE), "-f", "s16le", "pipe:1"]
 
 
-def split_point(pcm,min_seconds=6, max_seconds=20):
+def split_point(pcm, min_seconds=6, max_seconds=20):
     """Where to cut a growing live buffer: the last quiet 200 ms window after min_seconds, the quietest window once
     max_seconds is reached, or None while the buffer should keep growing. Same energy rule as chunks()."""
     if len(pcm) < min_seconds * RATE:
@@ -286,6 +286,7 @@ class WhisperNPU:
         recording is also written to wav_path so nothing is lost."""
         command = mic_command(source, ffmpeg) if isinstance(source, str) else source
         label = source if isinstance(source, str) else "시스템 소리"
+        kind = "마이크" if isinstance(source, str) else "시스템 소리"
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         recording = wave.open(str(wav_path), "wb") if wav_path else None
@@ -339,7 +340,7 @@ class WhisperNPU:
                     transcribe_segment(pcm[:cut])
                 elif process.poll() is not None:
                     detail = process.stderr.read().decode("utf-8", errors="replace")[-1500:]
-                    raise RuntimeError("마이크 입력이 끊겼습니다.\n" + detail)
+                    raise RuntimeError(f"{kind} 입력이 끊겼습니다.\n" + detail)
                 else:
                     self.cancel.wait(0.25)
             process.terminate()
@@ -492,7 +493,10 @@ class WhisperCPU(WhisperGPU):
             os.environ["PATH"] = f"{libs};{os.environ.get('PATH', '')}"
             self.dll_directory = os.add_dll_directory(str(libs)) if libs.is_dir() else None
             target = openvino_device()
-            encoder_providers = [("OpenVINOExecutionProvider", {"device_type": target}), "CPUExecutionProvider"]
+            cache = ROOT / "models" / "openvino-cache"  # compiled encoder blob: only the first job compiles
+            cache.mkdir(parents=True, exist_ok=True)
+            encoder_providers = [("OpenVINOExecutionProvider", {"device_type": target, "cache_dir": str(cache)}),
+                                 "CPUExecutionProvider"]
             label = f"인텔 {target} (OpenVINO) · CPU (decoder)"
         import onnxruntime as ort
         ort.disable_telemetry_events()

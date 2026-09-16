@@ -269,8 +269,9 @@ def setup(library, body, query):
 
 @route("POST", r"/job/cancel")
 def cancel_job(library, body, query):
-    if JOB.get("state") == "running" and JOB.get("op") == "transcribe":
-        JOB_CANCEL.set()
+    with JOB_LOCK:  # start_job swaps JOB/JOB_CANCEL under this lock
+        if JOB.get("state") == "running" and JOB.get("op") == "transcribe":
+            JOB_CANCEL.set()
     return {"ok": True}
 
 
@@ -377,7 +378,8 @@ def main():
                 library.update(JOB["note_id"], transcript=finished)
         except Exception:
             pass  # best-effort — the process is exiting either way
-    CANCEL.set()  # no new jobs from here on
+    with JOB_LOCK:  # a racing start_job either finished (its JOB is seen below) or sees CANCEL
+        CANCEL.set()  # no new jobs from here on
     if JOB.get("state") == "running" and JOB.get("op") == "listen":
         FINISH.set()  # same as ⏹ 녹음 마치기: the tail is transcribed and jobs.py attaches the WAV to the note
     else:

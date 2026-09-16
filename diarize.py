@@ -75,7 +75,9 @@ def static_model(source, target):
             if dim.dim_param or dim.dim_value == 0:
                 dim.dim_param = ""
                 dim.dim_value = 1 if index == 0 else FRAMES if index == 1 else dim.dim_value
-    onnx.save(model, str(target))
+    part = Path(target).with_suffix(".onnx.part")  # a killed setup never leaves a truncated model behind
+    onnx.save(model, str(part))
+    part.replace(target)
 
 
 class SpeakerEmbedder:

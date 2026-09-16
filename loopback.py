@@ -157,18 +157,21 @@ def main():
     system = Capture(endpoint(enumerator, E_RENDER), loopback=True)
     mic = Capture(endpoint(enumerator, E_CAPTURE, args.mic), loopback=False) if args.mic is not None else None
     out = sys.stdout.buffer
-    start, produced = time.monotonic(), 0
+    start, produced, produced_mic = time.monotonic(), 0, 0
     pending_system = pending_mic = np.zeros(0, dtype=np.int16)
     # ponytail: 10 ms polling instead of event handles (~1% of a core); switch to SetEventHandle if CPU use shows up.
     while True:
         time.sleep(0.01)
-        chunk = pad(system.read(), produced, int((time.monotonic() - start) * RATE), RATE // 10)
+        expected = int((time.monotonic() - start) * RATE)
+        chunk = pad(system.read(), produced, expected, RATE // 10)
         produced += len(chunk)
         if mic is None:
             block = chunk
         else:
+            voice = pad(mic.read(), produced_mic, expected, RATE // 10)  # a stalled mic must not stall the mix
+            produced_mic += len(voice)
             pending_system = np.concatenate([pending_system, chunk])
-            pending_mic = np.concatenate([pending_mic, mic.read()])
+            pending_mic = np.concatenate([pending_mic, voice])
             block, pending_system, pending_mic = mix(pending_system, pending_mic)
         if len(block):
             try:
