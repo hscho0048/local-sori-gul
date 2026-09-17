@@ -1,18 +1,156 @@
 // 소리글 dashboard. Single classic script (no imports/exports) — precompiled by scripts/build-tauri-assets.cjs.
 
-const VIEWS = [
-  ['all', '전체 보드'],
-  ['starred', '중요 보드'],
-  ['live', '미완료 녹음'],
-  ['trash', '휴지통'],
-];
+// Every user-visible string, per language. `{name}` placeholders are filled by t(key, vars).
+const STRINGS = {
+  ko: {
+    brand: '소리글', search: '검색어를 입력해 주세요', filter: '필터', 'filter.active': '필터 · {name}', 'filter.all': '모든 폴더',
+    newNote: '+ 새 받아쓰기', details: '자세히', language: '언어',
+    'view.all': '전체 보드', 'view.starred': '중요 보드', 'view.live': '미완료 녹음', 'view.trash': '휴지통',
+    'col.title': '보드 이름', 'col.duration': '길이', 'col.folder': '폴더 위치', 'col.created': '생성일',
+    'sidebar.mine': '내 받아쓰기', 'sidebar.folders': '폴더', 'sidebar.collapse': '사이드바 접기',
+    'folder.add': '폴더 추가', 'folder.delete': '폴더 삭제',
+    'row.interrupted': '녹음 중단됨', 'row.select': '{title} 선택',
+    'table.empty': '받아쓰기가 없습니다.', 'table.trashEmpty': '휴지통이 비어 있습니다.', 'table.selectAll': '전체 선택',
+    'action.count': '{n}개 선택', 'action.restore': '복원', 'action.deleteForever': '영구 삭제', 'action.star': '중요',
+    'action.move': '폴더 이동', 'action.noFolder': '폴더 없음', 'action.trash': '휴지통', 'action.clear': '선택 해제',
+    'confirm.deleteNotes': '선택한 받아쓰기를 영구 삭제할까요? 오디오도 지워집니다.',
+    'confirm.deleteFolder': '폴더를 삭제할까요? 받아쓰기는 남습니다.',
+    'caption.min': '최소화', 'caption.max': '최대화', 'caption.restore': '이전 크기로', 'caption.close': '닫기',
+    'drop.hint': '오디오 파일을 여기에 끌어 놓으세요',
+    'device.npu': 'NPU (Hexagon)', 'device.gpu': 'GPU (Adreno)', 'device.intel-gpu': '인텔 GPU (OpenVINO)',
+    'device.intel-npu': '인텔 NPU (OpenVINO)', 'device.cpu': 'CPU',
+    'source.mic': '마이크', 'source.system': '시스템 소리 (Zoom·Teams)', 'source.both': '마이크 + 시스템 소리',
+    'chooser.title': '새 받아쓰기', 'chooser.device': '연산 장치', 'chooser.speakers': '화자 분리',
+    'chooser.file': '오디오 전사…', 'chooser.live': '실시간 전사', 'chooser.input': '소리 입력',
+    'chooser.micsLoading': '마이크 목록을 불러오는 중…',
+    'chooser.noMics': '사용할 수 있는 마이크를 찾지 못했습니다. 마이크를 연결하고 Windows 개인 정보 설정에서 마이크 접근을 허용해 주세요.',
+    'chooser.systemHint': '회의 앱 소리를 그대로 받아씁니다. 스피커 볼륨과 관계없이 기록됩니다.',
+    'chooser.liveHint': '말이 끊길 때마다 바로 전사해 본문에 이어 붙입니다. ⏹ 녹음 마치기로 끝내면 녹음 파일도 보관됩니다.',
+    'chooser.start': '녹음 시작', 'filter.audio': '오디오', 'filter.txt': '텍스트 파일',
+    cancel: '취소', cancelling: '취소 중…',
+    'editor.back': '← 목록', 'editor.export': 'TXT로 저장', 'editor.saving': '저장 중…', 'editor.saved': '저장됨',
+    'editor.saveFailed': '저장하지 못했습니다: {msg}', 'editor.loadFailed': '노트를 불러오지 못했습니다: {msg}',
+    'export.done': 'TXT로 저장했습니다.', 'export.saveFailed': '저장하지 못해 내보내지 못했습니다: {msg}',
+    'find.locked': '전사 중에는 바꿀 수 없습니다.', 'find.needle': '찾을 말', 'find.replacement': '바꿀 말',
+    'find.next': '다음 찾기', 'find.replace': '바꾸기', 'find.replaceAll': '모두 바꾸기',
+    'find.none': '찾는 말이 없습니다.', 'find.count': '{n}곳 있습니다.', 'find.replaced': '{n}곳을 바꿨습니다. 되돌리려면 Ctrl+Z.',
+    'phase.loading': '준비 중…', 'phase.decoding': '오디오 읽는 중…', 'phase.diarizing': '화자 나누는 중…',
+    'phase.transcribing': '받아쓰는 중 · {p}%', 'job.queued': '전사 대기 중', 'job.queueCount': '대기 {n}개',
+    'live.recording': '녹음 중 · {source}', 'live.busy': '받아쓰는 중', 'live.finishing': '마지막 부분 받아쓰는 중…',
+    'live.stop': '녹음 마치기',
+    'live.source.mic': '마이크', 'live.source.system': '시스템 소리', 'live.source.both': '마이크 + 시스템 소리',
+    'setup.speech': '음성 인식 모델', 'setup.speech.hint': '한국어를 받아쓰는 인공지능 모델',
+    'setup.speaker': '화자 구분 모델', 'setup.speaker.hint': '누가 말했는지 나누는 모델',
+    'setup.audio': '오디오 변환 도구', 'setup.audio.hint': '여러 형식의 오디오 파일을 읽는 도구',
+    'setup.title': '소리글을 준비하고 있어요', 'setup.titleFailed': '준비를 마치지 못했어요',
+    'setup.lead': '처음 한 번만 받아쓰기에 필요한 모델을 내려받아요{size}. 모델은 이 PC에만 저장되고, 그다음부터는 인터넷 없이 받아쓸 수 있어요.',
+    'setup.size': ' (약 {size})',
+    'setup.state.done': ' 완료', 'setup.state.active': ' 진행 중', 'setup.state.failed': ' 실패', 'setup.state.pending': ' 대기',
+    'setup.converting': '이 PC에 맞게 모델을 준비하는 중…', 'setup.checking': '받아 둔 파일을 확인하는 중…',
+    'setup.errorHelp': '인터넷 연결을 확인한 뒤 다시 시도해 주세요. 받던 파일은 이어서 받아요.',
+    'setup.foot': '창을 닫아도 괜찮아요. 다음에 열면 이어서 받아요.', 'setup.retry': '다시 시도', 'setup.start': '내려받기 시작',
+    'err.busy': '다른 전사 작업이 진행 중입니다. 끝난 뒤 다시 시작해 주세요.',
+    'err.invalid_file': '지원하는 로컬 오디오 파일을 선택해 주세요.', 'err.no_mic': '마이크를 선택해 주세요.',
+    'err.shutting_down': '앱을 종료하는 중입니다.', 'err.cancelled': '취소됐습니다.',
+    'err.generic': '문제가 생겼습니다.', 'err.jobFailed': '작업이 실패했습니다.',
+    'err.audioOnly': '오디오 파일만 전사할 수 있습니다.', 'err.noMicFound': '사용할 수 있는 마이크를 찾지 못했습니다.',
+    'err.file': '{name}: {msg}',
+  },
+  en: {
+    brand: 'Sorigul', search: 'Search', filter: 'Filter', 'filter.active': 'Filter · {name}', 'filter.all': 'All folders',
+    newNote: '+ New transcription', details: 'Details', language: 'Language',
+    'view.all': 'All', 'view.starred': 'Starred', 'view.live': 'Unfinished recordings', 'view.trash': 'Trash',
+    'col.title': 'Name', 'col.duration': 'Length', 'col.folder': 'Folder', 'col.created': 'Created',
+    'sidebar.mine': 'My transcripts', 'sidebar.folders': 'Folders', 'sidebar.collapse': 'Collapse sidebar',
+    'folder.add': 'Add folder', 'folder.delete': 'Delete folder',
+    'row.interrupted': 'Recording interrupted', 'row.select': 'Select {title}',
+    'table.empty': 'No transcripts yet.', 'table.trashEmpty': 'Trash is empty.', 'table.selectAll': 'Select all',
+    'action.count': '{n} selected', 'action.restore': 'Restore', 'action.deleteForever': 'Delete forever', 'action.star': 'Star',
+    'action.move': 'Move to folder', 'action.noFolder': 'No folder', 'action.trash': 'Move to trash', 'action.clear': 'Deselect',
+    'confirm.deleteNotes': 'Delete the selected transcripts forever? Their audio is deleted too.',
+    'confirm.deleteFolder': 'Delete this folder? Its transcripts are kept.',
+    'caption.min': 'Minimize', 'caption.max': 'Maximize', 'caption.restore': 'Restore', 'caption.close': 'Close',
+    'drop.hint': 'Drop audio files here',
+    'device.npu': 'NPU (Hexagon)', 'device.gpu': 'GPU (Adreno)', 'device.intel-gpu': 'Intel GPU (OpenVINO)',
+    'device.intel-npu': 'Intel NPU (OpenVINO)', 'device.cpu': 'CPU',
+    'source.mic': 'Microphone', 'source.system': 'System audio (Zoom·Teams)', 'source.both': 'Microphone + system audio',
+    'chooser.title': 'New transcription', 'chooser.device': 'Processor', 'chooser.speakers': 'Speaker labels',
+    'chooser.file': 'Transcribe audio…', 'chooser.live': 'Live transcription', 'chooser.input': 'Input',
+    'chooser.micsLoading': 'Looking for microphones…',
+    'chooser.noMics': 'No microphone found. Connect one and allow microphone access in Windows privacy settings.',
+    'chooser.systemHint': 'Transcribes what your meeting app plays, whatever the speaker volume.',
+    'chooser.liveHint': 'Each pause is transcribed right away and added to the text. Stop recording to keep the audio file too.',
+    'chooser.start': 'Start recording', 'filter.audio': 'Audio', 'filter.txt': 'Text file',
+    cancel: 'Cancel', cancelling: 'Cancelling…',
+    'editor.back': '← List', 'editor.export': 'Save as TXT', 'editor.saving': 'Saving…', 'editor.saved': 'Saved',
+    'editor.saveFailed': 'Couldn’t save: {msg}', 'editor.loadFailed': 'Couldn’t open this transcript: {msg}',
+    'export.done': 'Saved as TXT.', 'export.saveFailed': 'Couldn’t save, so nothing was exported: {msg}',
+    'find.locked': 'You can’t replace text while transcribing.', 'find.needle': 'Find', 'find.replacement': 'Replace with',
+    'find.next': 'Find next', 'find.replace': 'Replace', 'find.replaceAll': 'Replace all',
+    'find.none': 'No matches.', 'find.count': '{n} found.', 'find.replaced': 'Replaced {n}. Press Ctrl+Z to undo.',
+    'phase.loading': 'Getting ready…', 'phase.decoding': 'Reading audio…', 'phase.diarizing': 'Finding speakers…',
+    'phase.transcribing': 'Transcribing · {p}%', 'job.queued': 'Waiting to transcribe', 'job.queueCount': '{n} waiting',
+    'live.recording': 'Recording · {source}', 'live.busy': 'Transcribing', 'live.finishing': 'Transcribing the last part…',
+    'live.stop': 'Stop recording',
+    'live.source.mic': 'Microphone', 'live.source.system': 'System audio', 'live.source.both': 'Microphone + system audio',
+    'setup.speech': 'Speech recognition model', 'setup.speech.hint': 'The AI model that transcribes Korean',
+    'setup.speaker': 'Speaker model', 'setup.speaker.hint': 'Tells who said what',
+    'setup.audio': 'Audio converter', 'setup.audio.hint': 'Reads audio files in many formats',
+    'setup.title': 'Setting up Sorigul', 'setup.titleFailed': 'Setup didn’t finish',
+    'setup.lead': 'Sorigul downloads its models once{size}. They stay on this PC, and after that transcription works offline.',
+    'setup.size': ' (about {size})',
+    'setup.state.done': ' done', 'setup.state.active': ' in progress', 'setup.state.failed': ' failed', 'setup.state.pending': ' waiting',
+    'setup.converting': 'Preparing the model for this PC…', 'setup.checking': 'Checking downloaded files…',
+    'setup.errorHelp': 'Check your internet connection and try again. Downloads pick up where they stopped.',
+    'setup.foot': 'You can close the window. The download resumes next time.', 'setup.retry': 'Try again', 'setup.start': 'Start download',
+    'err.busy': 'Another transcription is running. Try again when it finishes.',
+    'err.invalid_file': 'Choose a supported audio file on this PC.', 'err.no_mic': 'Choose a microphone.',
+    'err.shutting_down': 'Sorigul is closing.', 'err.cancelled': 'Cancelled.',
+    'err.generic': 'Something went wrong.', 'err.jobFailed': 'The task failed.',
+    'err.audioOnly': 'Only audio files can be transcribed.', 'err.noMicFound': 'No microphone found.',
+    'err.file': '{name}: {msg}',
+  },
+};
+const savedLang = () => { try { return localStorage.getItem('sori.lang'); } catch (e) { return null; } };
+// ponytail: the language is a module variable that t() reads; App keeps a copy in state only to re-render every component
+// on a switch. Fine while nothing memoizes; pass it through context if a React.memo component ever shows stale text.
+let uiLang = STRINGS[savedLang()] ? savedLang() : (/^ko/i.test(navigator.language || '') ? 'ko' : 'en');
+document.documentElement.lang = uiLang;
+const t = (key, vars) => String(STRINGS[uiLang][key] ?? STRINGS.ko[key] ?? key)
+  .replace(/\{(\w+)\}/g, (_, name) => (vars && vars[name] != null ? vars[name] : ''));
 
-const COLUMNS = [
-  ['title', '보드 이름'],
-  ['duration', '길이'],
-  ['folder', '폴더 위치'],
-  ['created', '생성일'],
-];
+// A message shown to the user, kept as data so it re-words on a language switch: { key?, vars?, error? }.
+// Server errors carry a stable `code`; known codes are translated, the raw (Korean) text goes under Details.
+const rawError = (error) => (error ? error.message || String(error) : '');
+const say = (m) => {
+  const raw = rawError(m.error);
+  const code = m.error && m.error.code;
+  const reason = code && STRINGS.ko[`err.${code}`] ? t(`err.${code}`) : (uiLang === 'ko' || !raw ? raw : t('err.generic'));
+  const text = m.key ? t(m.key, { ...m.vars, msg: reason }) : reason;
+  return [text, raw && !text.includes(raw) ? raw : ''];
+};
+const Msg = ({ m }) => {
+  if (!m) return null;
+  const [text, detail] = say(m);
+  return (
+    <React.Fragment>
+      {text}
+      {detail && <details className="msg-details"><summary>{t('details')}</summary><pre>{detail}</pre></details>}
+    </React.Fragment>
+  );
+};
+const deviceLabel = (d) => STRINGS[uiLang][`device.${d.id}`] || d.label;
+
+const LangToggle = ({ lang, onChange }) => (
+  <div className="lang-toggle" role="group" aria-label={t('language')}>
+    {[['ko', '한'], ['en', 'EN']].map(([value, label]) => (
+      <button key={value} type="button" aria-pressed={lang === value} lang={value} onClick={() => onChange(value)}>{label}</button>
+    ))}
+  </div>
+);
+
+const VIEWS = ['all', 'starred', 'live', 'trash'];
+const COLUMNS = ['title', 'duration', 'folder', 'created'];
 
 const formatDuration = (seconds) => {
   if (seconds == null) return '—';
@@ -42,12 +180,11 @@ const compareNotes = (a, b, sort) => {
   return typeof av === 'string' ? av.localeCompare(bv, 'ko') * dir : (av - bv) * dir;
 };
 
-const SOURCES = [['mic', '마이크'], ['system', '시스템 소리 (Zoom·Teams)'], ['both', '마이크 + 시스템 소리']];
+const SOURCES = ['mic', 'system', 'both'];
 // Last live-recording choice, reused by the chooser and by Ctrl+Shift+R / the tray.
 const loadLive = () => { try { return JSON.parse(localStorage.getItem('sori.live')) || {}; } catch (e) { return {}; } };
 const saveLive = (value) => { try { localStorage.setItem('sori.live', JSON.stringify({ ...loadLive(), ...value })); } catch (e) { /* private mode: not remembered */ } };
 const pickDevice = (devices, wanted) => (devices.some((d) => d.id === wanted) ? wanted : (devices[0] ? devices[0].id : ''));
-const errorText = (err) => err.message || String(err);
 
 const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
   const [step, setStep] = React.useState('choose');
@@ -56,14 +193,15 @@ const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
   const [speakers, setSpeakers] = React.useState(true);
   const [mics, setMics] = React.useState(null); // null = not loaded yet
   const [mic, setMic] = React.useState('');
-  const [errorMsg, setErrorMsg] = React.useState('');
+  const [errorMsg, setErrorMsg] = React.useState(null);
   const dialogRef = React.useRef(null);
   const busy = job.state === 'running';
+  const fail = (error) => setErrorMsg({ error });
 
   React.useEffect(() => {
     if (!open) return;
     setStep('choose');
-    setErrorMsg('');
+    setErrorMsg(null);
     setMics(null);
     setMic('');
     setSource(loadLive().source || 'mic');
@@ -97,34 +235,34 @@ const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
   if (!open) return null;
 
   const pickFile = () => {
-    setErrorMsg('');
-    window.SoriBridge.pickAudio().then((path) => {
+    setErrorMsg(null);
+    window.SoriBridge.pickAudio(t('filter.audio')).then((path) => {
       if (!path) return;
       saveLive({ device, speakers });
       window.SoriBridge.transcribe(path, device, speakers).then(
         ({ note_id }) => { onClose(); startPolling(); openNote(note_id); },
-        (err) => setErrorMsg(errorText(err)),
+        fail,
       );
-    }, (err) => setErrorMsg(errorText(err)));
+    }, fail);
   };
 
   const goLive = () => {
-    setErrorMsg('');
+    setErrorMsg(null);
     setStep('mic');
     window.SoriBridge.mics().then(
       (list) => { setMics(list); const saved = loadLive().mic; setMic(list.includes(saved) ? saved : (list[0] ?? '')); }, // default to the first mic — with exactly one
                                                              // option <select>'s onChange never fires, so
                                                              // without this `mic` stays '' and /live 400s
-      (err) => { setMics([]); setErrorMsg(errorText(err)); },
+      (err) => { setMics([]); fail(err); },
     );
   };
 
   const startRecording = () => {
-    setErrorMsg('');
+    setErrorMsg(null);
     saveLive({ device, mic, source });
     window.SoriBridge.startLive(source === 'system' ? '' : mic, device, source).then(
       ({ note_id }) => { onClose(); startPolling(); openNote(note_id); },
-      (err) => setErrorMsg(errorText(err)),
+      fail,
     );
   };
 
@@ -134,53 +272,53 @@ const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-label="새 받아쓰기"
+        aria-label={t('chooser.title')}
         tabIndex={-1}
         ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="modal-title">새 받아쓰기</h2>
+        <h2 className="modal-title">{t('chooser.title')}</h2>
         <label className="modal-field">
-          <span>연산 장치</span>
+          <span>{t('chooser.device')}</span>
           <select value={device} disabled={!devices} onChange={(e) => setDevice(e.target.value)}>
-            {(devices || []).map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+            {(devices || []).map((d) => <option key={d.id} value={d.id}>{deviceLabel(d)}</option>)}
           </select>
         </label>
         {step === 'choose' && (
           <React.Fragment>
             <label className="modal-check">
               <input type="checkbox" checked={speakers} onChange={(e) => setSpeakers(e.target.checked)} />
-              <span>화자 분리</span>
+              <span>{t('chooser.speakers')}</span>
             </label>
             <div className="modal-actions">
-              <button className="modal-choice" disabled={busy || !device} onClick={pickFile}>오디오 전사…</button>
-              <button className="modal-choice" disabled={busy || !device} onClick={goLive}>실시간 전사</button>
+              <button className="modal-choice" disabled={busy || !device} onClick={pickFile}>{t('chooser.file')}</button>
+              <button className="modal-choice" disabled={busy || !device} onClick={goLive}>{t('chooser.live')}</button>
             </div>
           </React.Fragment>
         )}
         {step === 'mic' && (
           <div className="modal-mic">
             <label className="modal-field">
-              <span>소리 입력</span>
+              <span>{t('chooser.input')}</span>
               <select value={source} onChange={(e) => setSource(e.target.value)}>
-                {SOURCES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                {SOURCES.map((v) => <option key={v} value={v}>{t(`source.${v}`)}</option>)}
               </select>
             </label>
             {source !== 'system' && (mics == null ? (
-              <div className="modal-hint">마이크 목록을 불러오는 중…</div>
+              <div className="modal-hint">{t('chooser.micsLoading')}</div>
             ) : mics.length === 0 ? (
-              <div className="modal-hint">사용할 수 있는 마이크를 찾지 못했습니다. 마이크를 연결하고 Windows 개인 정보 설정에서 마이크 접근을 허용해 주세요.</div>
+              <div className="modal-hint">{t('chooser.noMics')}</div>
             ) : (
               <select value={mic} onChange={(e) => setMic(e.target.value)}>
                 {mics.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             ))}
-            {source !== 'mic' && <p className="modal-hint">회의 앱 소리를 그대로 받아씁니다. 스피커 볼륨과 관계없이 기록됩니다.</p>}
-            <p className="modal-hint">말이 끊길 때마다 바로 전사해 본문에 이어 붙입니다. ⏹ 녹음 마치기로 끝내면 녹음 파일도 보관됩니다.</p>
-            <button className="btn btn-primary" disabled={busy || !device || (source !== 'system' && (!mics || mics.length === 0))} onClick={startRecording}>녹음 시작</button>
+            {source !== 'mic' && <p className="modal-hint">{t('chooser.systemHint')}</p>}
+            <p className="modal-hint">{t('chooser.liveHint')}</p>
+            <button className="btn btn-primary" disabled={busy || !device || (source !== 'system' && (!mics || mics.length === 0))} onClick={startRecording}>{t('chooser.start')}</button>
           </div>
         )}
-        {errorMsg && <div className="modal-error">{errorMsg}</div>}
+        {errorMsg && <div className="modal-error"><Msg m={errorMsg} /></div>}
       </div>
     </div>
   );
@@ -203,28 +341,33 @@ const CancelButton = () => {
   const [busy, setBusy] = React.useState(false);
   return (
     <button className="btn-cancel" disabled={busy} onClick={() => { setBusy(true); window.SoriBridge.cancelJob().catch(() => setBusy(false)); }}>
-      {busy ? '취소 중…' : '취소'}
+      {busy ? t('cancelling') : t('cancel')}
     </button>
   );
 };
+
+// File-transcription status in user words, from the job's structured phase (never its Korean `stage`).
+const fileStatus = (job) => (job.phase === 'transcribing'
+  ? t('phase.transcribing', { p: Math.floor(job.percent || 0) })
+  : t(['decoding', 'diarizing'].includes(job.phase) ? `phase.${job.phase}` : 'phase.loading'));
 
 const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
   const [title, setTitle] = React.useState('');
   const [transcript, setTranscript] = React.useState('');
   const [loaded, setLoaded] = React.useState(false); // false until note(id) has actually resolved once
-  const [loadError, setLoadError] = React.useState('');
+  const [loadError, setLoadError] = React.useState(null);
   // True from the moment the post-job transcript reload starts until it succeeds. Kept true forever on
   // failure (rather than unlocking back to the stale local `transcript`) — the point is that nobody may
   // edit/autosave over the server's just-written final transcript until we've actually confirmed what it is.
   const [reloadingTranscript, setReloadingTranscript] = React.useState(false);
   const reloadingRef = React.useRef(reloadingTranscript);
   reloadingRef.current = reloadingTranscript;
-  const [saveStatus, setSaveStatus] = React.useState('');
+  const [saveStatus, setSaveStatus] = React.useState(null);
   const [findOpen, setFindOpen] = React.useState(false);
   const [needle, setNeedle] = React.useState('');
   const [replacement, setReplacement] = React.useState('');
-  const [findMsg, setFindMsg] = React.useState('');
-  const [exportMsg, setExportMsg] = React.useState('');
+  const [findMsg, setFindMsg] = React.useState(null);
+  const [exportMsg, setExportMsg] = React.useState(null);
   const textareaRef = React.useRef(null);
   const savedRef = React.useRef({ title: '', transcript: '' }); // last value persisted to the server
   const saveTimerRef = React.useRef(null);
@@ -244,9 +387,9 @@ const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
         setTranscript(n.transcript || '');
         savedRef.current = { title: n.title, transcript: n.transcript || '' };
         setLoaded(true);
-        setLoadError('');
+        setLoadError(null);
       },
-      (err) => setLoadError(err.message || String(err)),
+      (error) => setLoadError({ key: 'editor.loadFailed', error }),
     );
   }, [noteId]);
 
@@ -271,7 +414,7 @@ const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
           savedRef.current = { ...savedRef.current, transcript: n.transcript || '' };
           setReloadingTranscript(false);
         },
-        (err) => setLoadError(err.message || String(err)), // stays locked: reloadingTranscript is not cleared
+        (error) => setLoadError({ key: 'editor.loadFailed', error }), // stays locked: reloadingTranscript is not cleared
       );
     }
     prevRunningRef.current = jobRunningHere;
@@ -294,12 +437,11 @@ const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
     const transcriptLocked = jobRunningRef.current || reloadingRef.current;
     if (!transcriptLocked && transcript !== savedRef.current.transcript) fields.transcript = transcript;
     if (Object.keys(fields).length === 0) return Promise.resolve();
-    setSaveStatus('저장 중…');
+    setSaveStatus({ key: 'editor.saving' });
     return window.SoriBridge.updateNote(noteId, fields).then(
-      () => { savedRef.current = { ...savedRef.current, ...fields }; setSaveStatus('저장됨'); },
+      () => { savedRef.current = { ...savedRef.current, ...fields }; setSaveStatus({ key: 'editor.saved' }); },
       (err) => {
-        const msg = err.message || String(err);
-        setSaveStatus(`저장하지 못했습니다: ${msg}`);
+        setSaveStatus({ key: 'editor.saveFailed', error: err });
         throw err; // let callers (export, flush-on-close) know the save didn't actually land
       },
     );
@@ -321,7 +463,7 @@ const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
   // failure here can't show a local banner — the editor is already gone by the time it lands — so it goes
   // to the App-level banner via onSaveError instead of being swallowed.
   React.useEffect(() => () => {
-    flushRef.current().catch((err) => onSaveError(`저장하지 못했습니다: ${err.message || String(err)}`));
+    flushRef.current().catch((error) => onSaveError({ key: 'editor.saveFailed', error }));
   }, []);
 
   React.useEffect(() => {
@@ -340,7 +482,7 @@ const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
 
   React.useEffect(() => {
     if (!findOpen) return;
-    setFindMsg('');
+    setFindMsg(null);
     const ta = textareaRef.current;
     if (ta) {
       const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
@@ -350,14 +492,14 @@ const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
 
   const findNext = () => {
     const ta = textareaRef.current;
-    if (!ta || !needle) { setFindMsg('찾는 말이 없습니다.'); return false; }
+    if (!ta || !needle) { setFindMsg({ key: 'find.none' }); return false; }
     const text = ta.value;
     let idx = text.indexOf(needle, ta.selectionEnd);
     if (idx === -1) idx = text.indexOf(needle, 0);
-    if (idx === -1) { setFindMsg('찾는 말이 없습니다.'); return false; }
+    if (idx === -1) { setFindMsg({ key: 'find.none' }); return false; }
     ta.focus();
     ta.setSelectionRange(idx, idx + needle.length);
-    setFindMsg(`${countOccurrences(text, needle)}곳 있습니다.`);
+    setFindMsg({ key: 'find.count', vars: { n: countOccurrences(text, needle) } });
     return true;
   };
 
@@ -391,25 +533,23 @@ const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
     if (!ta || !needle) return;
     const text = ta.value;
     const count = countOccurrences(text, needle);
-    if (count === 0) { setFindMsg('찾는 말이 없습니다.'); return; }
+    if (count === 0) { setFindMsg({ key: 'find.none' }); return; }
     const newText = text.split(needle).join(replacement);
     applyReplacement(ta, 0, text.length, newText);
-    setFindMsg(`${count}곳을 바꿨습니다. 되돌리려면 Ctrl+Z.`);
+    setFindMsg({ key: 'find.replaced', vars: { n: count } });
   };
 
   const exportTxt = () => {
-    window.SoriBridge.pickSavePath(`${title}.txt`).then((path) => {
+    const failed = (error) => setExportMsg({ error });
+    window.SoriBridge.pickSavePath(`${title}.txt`, t('filter.txt')).then((path) => {
       if (!path) return;
       flushSave().then(
         () => {
-          window.SoriBridge.exportNote(noteId, path).then(
-            () => setExportMsg('TXT로 저장했습니다.'),
-            (err) => setExportMsg(err.message || String(err)),
-          );
+          window.SoriBridge.exportNote(noteId, path).then(() => setExportMsg({ key: 'export.done' }), failed);
         },
-        (err) => setExportMsg(`저장하지 못해 내보내지 못했습니다: ${err.message || String(err)}`),
+        (error) => setExportMsg({ key: 'export.saveFailed', error }),
       );
-    }, (err) => setExportMsg(err.message || String(err)));
+    }, failed);
   };
 
   return (
@@ -418,47 +558,48 @@ const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
         {/* ponytail: fires the flush PATCH without awaiting it before onClose()'s refresh() GET, so on a
             slow save the list can briefly show the pre-edit title for one refresh cycle. Upgrade path:
             await flushSave() before calling onClose() (needs onClose to be async-aware). */}
-        <button className="btn" onClick={() => { flushSave().catch((err) => onSaveError(`저장하지 못했습니다: ${err.message || String(err)}`)); onClose(); }}>← 목록</button>
+        <button className="btn" onClick={() => { flushSave().catch((error) => onSaveError({ key: 'editor.saveFailed', error })); onClose(); }}>{t('editor.back')}</button>
         <input
           className="editor-title"
           value={title}
           disabled={!loaded}
           onChange={(e) => setTitle(e.target.value)}
         />
-        <span className="save-status">{saveStatus}</span>
-        <button className="btn" disabled={jobRunningHere} onClick={exportTxt}>TXT로 저장</button>
+        <span className="save-status"><Msg m={saveStatus} /></span>
+        <button className="btn" disabled={jobRunningHere} onClick={exportTxt}>{t('editor.export')}</button>
       </div>
-      {loadError && <div className="modal-error">노트를 불러오지 못했습니다: {loadError}</div>}
-      {exportMsg && <div className="editor-note">{exportMsg}</div>}
-      {jobRunningHere && (
+      {loadError && <div className="modal-error"><Msg m={loadError} /></div>}
+      {exportMsg && <div className="editor-note"><Msg m={exportMsg} /></div>}
+      {/* A live recording's status lives only in the LivePill. */}
+      {jobRunningHere && job.op === 'transcribe' && (
         <div className="job-status">
-          <span className="job-stage">{job.stage}{job.op === 'transcribe' ? ` · ${job.percent.toFixed(1)}%` : ''}</span>
-          {job.op === 'transcribe' && <CancelButton />}
+          <span className="job-stage">{fileStatus(job)}</span>
+          <CancelButton />
         </div>
       )}
       {findOpen && (
         <div className="find-panel">
           {jobRunningHere ? (
-            <span className="modal-hint">전사 중에는 바꿀 수 없습니다.</span>
+            <span className="modal-hint">{t('find.locked')}</span>
           ) : (
             <React.Fragment>
               <input
                 className="find-input"
-                placeholder="찾을 말"
+                placeholder={t('find.needle')}
                 value={needle}
                 onChange={(e) => setNeedle(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') findNext(); }}
               />
               <input
                 className="find-input"
-                placeholder="바꿀 말"
+                placeholder={t('find.replacement')}
                 value={replacement}
                 onChange={(e) => setReplacement(e.target.value)}
               />
-              <button className="btn" onClick={findNext}>다음 찾기</button>
-              <button className="btn" onClick={replaceOne}>바꾸기</button>
-              <button className="btn" onClick={replaceAll}>모두 바꾸기</button>
-              {findMsg && <span className="find-msg">{findMsg}</span>}
+              <button className="btn" onClick={findNext}>{t('find.next')}</button>
+              <button className="btn" onClick={replaceOne}>{t('find.replace')}</button>
+              <button className="btn" onClick={replaceAll}>{t('find.replaceAll')}</button>
+              {findMsg && <span className="find-msg"><Msg m={findMsg} /></span>}
             </React.Fragment>
           )}
         </div>
@@ -474,46 +615,44 @@ const Editor = ({ noteId, job, chooserOpen, onClose, onSaveError }) => {
   );
 };
 
+// The only live-recording status. Its words come from the job's phase / source / recorded_seconds; the timer is the
+// server's recorded time, so it starts when recording does, not while the model loads. After the job ends the pill
+// stays mounted with the last state and `hidden`, so the CSS exit transition can play.
 const LivePill = ({ job }) => {
   const isLive = job.state === 'running' && job.op === 'listen';
-  const startRef = React.useRef(null);
+  const lastRef = React.useRef(null);
+  if (isLive) lastRef.current = job;
+  // Answers the click before the next poll says 'finishing'. Cleared only when a new recording starts, so the
+  // stop button can't reappear while the pill fades out.
   const [stopping, setStopping] = React.useState(false);
-  const [, setTick] = React.useState(0);
+  React.useEffect(() => { if (isLive) setStopping(false); }, [isLive]);
+  const shown = lastRef.current;
+  if (!shown) return null;
 
-  React.useEffect(() => {
-    if (isLive) {
-      if (startRef.current == null) startRef.current = Date.now(); // first poll that saw it running
-    } else {
-      startRef.current = null;
-      setStopping(false);
-    }
-  }, [isLive]);
-
-  React.useEffect(() => {
-    if (!isLive) return undefined;
-    const t = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, [isLive]);
-
-  if (!isLive) return null;
-
-  const elapsed = startRef.current ? Math.floor((Date.now() - startRef.current) / 1000) : 0;
-  const m = Math.floor(elapsed / 60);
-  const s = elapsed % 60;
+  const phase = stopping ? 'finishing' : shown.phase;
+  const preparing = !phase || phase === 'loading';
+  const finishing = phase === 'finishing';
+  const recording = !preparing && !finishing;
+  const seconds = Math.floor(shown.recorded_seconds || 0);
   const onStop = () => {
     setStopping(true);
     window.SoriBridge.stopLive().catch(() => setStopping(false));
   };
 
   return (
-    <div className="live-pill">
-      <span className="live-dot" aria-hidden="true" />
-      <span className="live-time">{m}:{String(s).padStart(2, '0')}</span>
-      <span className="live-stage">{job.stage}</span>
-      {stopping ? (
-        <span className="live-stopping">마지막 구간 전사 중…</span>
-      ) : (
-        <button className="live-stop" onClick={onStop}>⏹ 녹음 마치기</button>
+    <div className="live-pill" hidden={!isLive}>
+      <span className={`live-dot${recording ? '' : ' is-idle'}`} aria-hidden="true" />
+      {recording && <span className="live-time">{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</span>}
+      <span className="live-label" role="status">
+        {preparing ? t('phase.loading') : finishing ? t('live.finishing')
+          : t('live.recording', { source: t(`live.source.${shown.source || 'mic'}`) })}
+      </span>
+      {/* always laid out while recording, only faded in, so a segment starting never moves the stop button */}
+      {recording && <span className={`live-busy${phase === 'transcribing' ? ' is-on' : ''}`}>{t('live.busy')}</span>}
+      {!finishing && (
+        <button className="live-stop" disabled={!isLive} onClick={onStop}>
+          <span className="live-stop-glyph" aria-hidden="true" />{t('live.stop')}
+        </button>
       )}
     </div>
   );
@@ -526,11 +665,11 @@ const JobPill = ({ job, queued }) => {
     <div className="live-pill job-pill">
       {job.state === 'running' && job.op === 'transcribe' ? (
         <React.Fragment>
-          <span className="live-stage">{job.stage} · {job.percent.toFixed(1)}%</span>
+          <span className="live-label">{fileStatus(job)}</span>
           <CancelButton key={job.note_id} />
         </React.Fragment>
-      ) : <span className="live-stage">전사 대기 중</span>}
-      {queued > 0 && <span className="job-queue">대기 {queued}개</span>}
+      ) : <span className="live-label">{t('job.queued')}</span>}
+      {queued > 0 && <span className="job-queue">{t('job.queueCount', { n: queued })}</span>}
     </div>
   );
 };
@@ -538,11 +677,7 @@ const JobPill = ({ job, queued }) => {
 // First run: the models aren't on disk yet. Shows the setup job's per-file progress from GET /job.
 // First-run setup, in user terms: three groups (the backend's ("step", …) events) instead of file paths, one progress
 // bar for whatever is downloading now, and the raw error only behind 자세히.
-const SETUP_STEPS = [
-  ['speech', '음성 인식 모델', '한국어를 받아쓰는 인공지능 모델'],
-  ['speaker', '화자 구분 모델', '누가 말했는지 나누는 모델'],
-  ['audio', '오디오 변환 도구', '여러 형식의 오디오 파일을 읽는 도구'],
-];
+const SETUP_STEPS = ['speech', 'speaker', 'audio'];
 const formatMib = (mib) => (mib >= 1024 ? `${(mib / 1024).toFixed(1)} GB` : `${Math.round(mib)} MB`);
 const CheckGlyph = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
@@ -550,11 +685,11 @@ const CheckGlyph = () => (
   </svg>
 );
 
-const SetupScreen = ({ job, error, onRetry }) => {
+const SetupScreen = ({ job, error, onRetry, lang, onLang }) => {
   const mine = job.op === 'setup';
   const running = mine && job.state === 'running';
   const failed = (mine && job.state === 'error') || Boolean(error);
-  const current = mine ? SETUP_STEPS.findIndex(([key]) => key === job.step) : -1;
+  const current = mine ? SETUP_STEPS.indexOf(job.step) : -1;
   const downloading = running && job.file && !(job.ready || []).includes(job.file) && (job.progress || []).length === 3;
   const [, doneMib, totalMib] = downloading ? job.progress : [];
   const stateOf = (index) => {
@@ -566,23 +701,24 @@ const SetupScreen = ({ job, error, onRetry }) => {
   return (
     <div className="setup-screen">
       <div className="setup-drag" data-tauri-drag-region />
+      <div className="setup-lang"><LangToggle lang={lang} onChange={onLang} /></div>
       <div className="setup-card">
         <img className="setup-icon" src="icon.png" alt="" />
-        <h1 className="setup-title">{failed ? '준비를 마치지 못했어요' : '소리글을 준비하고 있어요'}</h1>
+        <h1 className="setup-title">{failed ? t('setup.titleFailed') : t('setup.title')}</h1>
         <p className="setup-lead">
-          처음 한 번만 받아쓰기에 필요한 모델을 내려받아요{mine && job.size ? ` (약 ${formatMib(job.size)})` : ''}.
-          모델은 이 PC에만 저장되고, 그다음부터는 인터넷 없이 받아쓸 수 있어요.
+          {t('setup.lead', { size: mine && job.size ? t('setup.size', { size: formatMib(job.size) }) : '' })}
         </p>
         <ol className="setup-steps" aria-live="polite">
-          {SETUP_STEPS.map(([key, label, hint], index) => {
+          {SETUP_STEPS.map((key, index) => {
             const state = stateOf(index);
+            const label = t(`setup.${key}`);
             return (
               <li key={key} className={`setup-step is-${state}`}>
                 <span className="setup-mark" aria-hidden="true">{state === 'done' ? <CheckGlyph /> : state === 'failed' ? '!' : index + 1}</span>
                 <div className="setup-step-body">
                   <div className="setup-step-label">
                     {label}
-                    <span className="sr-only">{{ done: ' 완료', active: ' 진행 중', failed: ' 실패', pending: ' 대기' }[state]}</span>
+                    <span className="sr-only">{t(`setup.state.${state}`)}</span>
                   </div>
                   {state === 'active' ? (
                     <React.Fragment>
@@ -592,11 +728,11 @@ const SetupScreen = ({ job, error, onRetry }) => {
                       </div>
                       <div className="setup-step-hint">
                         {downloading ? `${formatMib(doneMib)} / ${formatMib(totalMib)}`
-                          : /변환/.test(job.stage || '') ? '이 PC에 맞게 모델을 준비하는 중…' : '받아 둔 파일을 확인하는 중…'}
+                          : t(job.phase === 'converting' ? 'setup.converting' : 'setup.checking')}
                       </div>
                     </React.Fragment>
                   ) : (
-                    <div className="setup-step-hint">{hint}</div>
+                    <div className="setup-step-hint">{t(`setup.${key}.hint`)}</div>
                   )}
                 </div>
               </li>
@@ -605,18 +741,18 @@ const SetupScreen = ({ job, error, onRetry }) => {
         </ol>
         {failed && (
           <div className="setup-error" role="alert">
-            <p>인터넷 연결을 확인한 뒤 다시 시도해 주세요. 받던 파일은 이어서 받아요.</p>
+            <p>{t('setup.errorHelp')}</p>
             <details>
-              <summary>자세히</summary>
-              <pre>{[mine && job.error, error].filter(Boolean).join('\n')}</pre>
+              <summary>{t('details')}</summary>
+              <pre>{[mine && job.error, error && (rawError(error.error) || say(error)[0])].filter(Boolean).join('\n')}</pre>
             </details>
           </div>
         )}
         {/* an ended setup job while this screen is still up means the models are still incomplete */}
         {running ? (
-          <p className="setup-foot">창을 닫아도 괜찮아요. 다음에 열면 이어서 받아요.</p>
+          <p className="setup-foot">{t('setup.foot')}</p>
         ) : (
-          <button className="btn btn-primary setup-action" onClick={onRetry}>{mine || error ? '다시 시도' : '내려받기 시작'}</button>
+          <button className="btn btn-primary setup-action" onClick={onRetry}>{mine || error ? t('setup.retry') : t('setup.start')}</button>
         )}
       </div>
     </div>
@@ -679,43 +815,44 @@ const WindowCaption = () => {
   );
   return ReactDOM.createPortal(
     <div className="caption">
-      {button('caption-min', '최소화', 'minimize', <MinimizeGlyph />)}
-      {button('caption-max', maximized ? '이전 크기로' : '최대화', 'toggleMaximize', maximized ? <RestoreGlyph /> : <MaximizeGlyph />)}
+      {button('caption-min', t('caption.min'), 'minimize', <MinimizeGlyph />)}
+      {button('caption-max', maximized ? t('caption.restore') : t('caption.max'), 'toggleMaximize', maximized ? <RestoreGlyph /> : <MaximizeGlyph />)}
       {/* close(), never destroy(): CloseRequested finishes a live recording and keeps its WAV before the app exits. */}
-      {button('caption-close', '닫기', 'close', <CloseGlyph />)}
+      {button('caption-close', t('caption.close'), 'close', <CloseGlyph />)}
     </div>,
     document.body,
   );
 };
 
-const TopBar = ({ query, setQuery, folders, folderFilter, setFolderFilter, onNewNote }) => {
+const TopBar = ({ query, setQuery, folders, folderFilter, setFolderFilter, onNewNote, lang, onLang }) => {
   const [filterOpen, setFilterOpen] = React.useState(false);
   const activeFolder = folders.find((f) => f.id === folderFilter);
   return (
     <header className="topbar" data-tauri-drag-region>
-      <div className="brand" data-tauri-drag-region>소리글</div>
+      <div className="brand" data-tauri-drag-region>{t('brand')}</div>
       <input
         className="search"
-        placeholder="검색어를 입력해 주세요"
+        placeholder={t('search')}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
       <div className="dropdown">
         <button className="btn" onClick={() => setFilterOpen((v) => !v)}>
-          {activeFolder ? `필터 · ${activeFolder.name}` : '필터'}
+          {activeFolder ? t('filter.active', { name: activeFolder.name }) : t('filter')}
         </button>
         {filterOpen && (
           <div className="dropdown-menu">
-            <button className="dropdown-item" onClick={() => { setFolderFilter(null); setFilterOpen(false); }}>모든 폴더</button>
+            <button className="dropdown-item" onClick={() => { setFolderFilter(null); setFilterOpen(false); }}>{t('filter.all')}</button>
             {folders.map((f) => (
               <button key={f.id} className="dropdown-item" onClick={() => { setFolderFilter(f.id); setFilterOpen(false); }}>{f.name}</button>
             ))}
           </div>
         )}
       </div>
-      <button className="btn btn-primary" onClick={onNewNote}>+ 새 받아쓰기</button>
+      <button className="btn btn-primary" onClick={onNewNote}>{t('newNote')}</button>
       {/* Empty drag area, then room for the fixed caption buttons (Tauri drags only on direct clicks on these). */}
       <div className="drag-spacer" data-tauri-drag-region />
+      <LangToggle lang={lang} onChange={onLang} />
       <div className="caption-reserve" aria-hidden="true" />
     </header>
   );
@@ -734,16 +871,16 @@ const Sidebar = ({ view, setView, liveCount, folders, onCreateFolder, onDeleteFo
 
   return (
     <nav className="sidebar">
-      {!collapsed && <div className="sidebar-label">내 받아쓰기</div>}
-      {VIEWS.map(([key, label]) => (
+      {!collapsed && <div className="sidebar-label">{t('sidebar.mine')}</div>}
+      {VIEWS.map((key) => (
         <button key={key} className={`nav-item${view === key ? ' active' : ''}`} onClick={() => setView(key)}>
-          <span>{collapsed ? label[0] : label}</span>
+          <span>{collapsed ? t(`view.${key}`)[0] : t(`view.${key}`)}</span>
           {key === 'live' && liveCount > 0 && <span className="badge">{liveCount}</span>}
         </button>
       ))}
       <div className="sidebar-row">
-        {!collapsed && <div className="sidebar-label">폴더</div>}
-        <button className="icon-btn" aria-label="폴더 추가" onClick={() => setAddingFolder(true)}>+</button>
+        {!collapsed && <div className="sidebar-label">{t('sidebar.folders')}</div>}
+        <button className="icon-btn" aria-label={t('folder.add')} onClick={() => setAddingFolder(true)}>+</button>
       </div>
       {addingFolder && (
         <input
@@ -764,11 +901,11 @@ const Sidebar = ({ view, setView, liveCount, folders, onCreateFolder, onDeleteFo
             {collapsed ? f.name[0] : f.name}
           </button>
           {!collapsed && (
-            <button className="folder-delete" aria-label="폴더 삭제" onClick={() => onDeleteFolder(f.id)}>×</button>
+            <button className="folder-delete" aria-label={t('folder.delete')} onClick={() => onDeleteFolder(f.id)}>×</button>
           )}
         </div>
       ))}
-      <button className="collapse-btn" aria-label="사이드바 접기" onClick={() => setCollapsed((v) => !v)}>
+      <button className="collapse-btn" aria-label={t('sidebar.collapse')} onClick={() => setCollapsed((v) => !v)}>
         {collapsed ? '»' : '«'}
       </button>
     </nav>
@@ -781,13 +918,13 @@ const Row = ({ note, selected, onToggleSelect, onOpen, job }) => {
   return (
     <tr className="row" onClick={() => onOpen(note.id)}>
       <td className="col-check" onClick={(e) => e.stopPropagation()}>
-        <input type="checkbox" checked={selected} onChange={() => onToggleSelect(note.id)} aria-label={`${note.title} 선택`} />
+        <input type="checkbox" checked={selected} onChange={() => onToggleSelect(note.id)} aria-label={t('row.select', { title: note.title })} />
       </td>
       <td className="col-title">
         <div className="title-line">
           {note.starred ? <span className="star" aria-hidden="true">★</span> : null}
           <span className="title">{note.title}</span>
-          {interrupted && <span className="chip chip-danger">녹음 중단됨</span>}
+          {interrupted && <span className="chip chip-danger">{t('row.interrupted')}</span>}
         </div>
         {note.keywords && note.keywords.length > 0 && (
           <div className="keywords">
@@ -805,19 +942,19 @@ const Row = ({ note, selected, onToggleSelect, onOpen, job }) => {
 const Table = ({ notes, view, sort, onSort, selection, onToggleSelect, onToggleSelectAll, onOpen, job }) => {
   const allIds = notes.map((n) => n.id);
   const allSelected = allIds.length > 0 && allIds.every((id) => selection.has(id));
-  const emptyText = view === 'trash' ? '휴지통이 비어 있습니다.' : '받아쓰기가 없습니다.';
+  const emptyText = view === 'trash' ? t('table.trashEmpty') : t('table.empty');
 
   return (
     <table className="table">
       <thead>
         <tr>
           <th className="col-check">
-            <input type="checkbox" checked={allSelected} onChange={() => onToggleSelectAll(allIds)} aria-label="전체 선택" />
+            <input type="checkbox" checked={allSelected} onChange={() => onToggleSelectAll(allIds)} aria-label={t('table.selectAll')} />
           </th>
-          {COLUMNS.map(([key, label]) => (
+          {COLUMNS.map((key) => (
             <th key={key}>
               <button className="sort-btn" onClick={() => onSort(key)}>
-                {label} {sort.key === key ? (sort.dir === 'asc' ? '▲' : '▼') : ''}
+                {t(`col.${key}`)} {sort.key === key ? (sort.dir === 'asc' ? '▲' : '▼') : ''}
               </button>
             </th>
           ))}
@@ -835,18 +972,18 @@ const Table = ({ notes, view, sort, onSort, selection, onToggleSelect, onToggleS
 
 const ActionBar = ({ count, view, folders, onToggleStar, onMoveFolder, onTrash, onRestore, onDeleteForever, onClear }) => (
   <div className="action-bar">
-    <span>{count}개 선택</span>
+    <span>{t('action.count', { n: count })}</span>
     {view === 'trash' ? (
       <React.Fragment>
-        <button className="btn" onClick={onRestore}>복원</button>
-        <button className="btn btn-danger" onClick={onDeleteForever}>영구 삭제</button>
+        <button className="btn" onClick={onRestore}>{t('action.restore')}</button>
+        <button className="btn btn-danger" onClick={onDeleteForever}>{t('action.deleteForever')}</button>
       </React.Fragment>
     ) : (
       <React.Fragment>
-        <button className="btn" onClick={onToggleStar}>중요</button>
+        <button className="btn" onClick={onToggleStar}>{t('action.star')}</button>
         <select
           className="folder-select"
-          aria-label="폴더 이동"
+          aria-label={t('action.move')}
           defaultValue=""
           onChange={(e) => {
             const value = e.target.value;
@@ -855,14 +992,14 @@ const ActionBar = ({ count, view, folders, onToggleStar, onMoveFolder, onTrash, 
             e.target.value = '';
           }}
         >
-          <option value="" disabled>폴더 이동</option>
-          <option value="none">폴더 없음</option>
+          <option value="" disabled>{t('action.move')}</option>
+          <option value="none">{t('action.noFolder')}</option>
           {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
         </select>
-        <button className="btn" onClick={onTrash}>휴지통</button>
+        <button className="btn" onClick={onTrash}>{t('action.trash')}</button>
       </React.Fragment>
     )}
-    <button className="btn" onClick={onClear}>선택 해제</button>
+    <button className="btn" onClick={onClear}>{t('action.clear')}</button>
   </div>
 );
 
@@ -890,14 +1027,22 @@ const App = () => {
   setupNeededRef.current = setupNeeded;
   const [chooserOpen, setChooserOpen] = React.useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
-  const [error, setError] = React.useState('');
+  const [lang, setLang] = React.useState(uiLang);
+  const changeLang = (value) => {
+    uiLang = value;
+    document.documentElement.lang = value;
+    try { localStorage.setItem('sori.lang', value); } catch (e) { /* private mode: not remembered */ }
+    setLang(value);
+  };
+  const [error, setError] = React.useState(null); // a message descriptor for <Msg>, see say()
   // Whether the CURRENT `error` was set by refresh() itself, vs. by someone else (job-error poll, runBulk,
   // folder actions, save-on-close). refresh() runs constantly (search typing, closing the editor, ...) and
   // must never wipe out an error it didn't cause — so its own success path only clears the banner when it
   // owns it. showError()/the banner's "×" mark ownership as "not refresh" / "none" respectively.
   const errorFromRefresh = React.useRef(false);
   const showError = (msg) => { errorFromRefresh.current = false; setError(msg); };
-  const dismissError = () => { errorFromRefresh.current = false; setError(''); };
+  const showFailure = (err) => showError({ error: err });
+  const dismissError = () => { errorFromRefresh.current = false; setError(null); };
 
   // refresh() always reads the CURRENT view/query (via refs, not closure) and tags each request with a
   // sequence number, so a request started for a view/query that's no longer current can never overwrite
@@ -916,12 +1061,12 @@ const App = () => {
       ([n, f, live]) => {
         if (seq !== requestSeq.current) return;
         setNotes(n); setFolders(f); setLiveCount(live.length);
-        if (errorFromRefresh.current) { errorFromRefresh.current = false; setError(''); }
+        if (errorFromRefresh.current) { errorFromRefresh.current = false; setError(null); }
       },
       (err) => {
         if (seq !== requestSeq.current) return;
         errorFromRefresh.current = true;
-        setError(err.message || String(err));
+        setError({ error: err });
       },
     );
   }, []);
@@ -956,7 +1101,9 @@ const App = () => {
               // it set itself (see errorFromRefresh above), so this message survives regardless of order.
               // A failed setup is shown on the setup screen itself (with 다시 시도), not in the banner.
               // A user-initiated 취소 is not an error worth a banner: the pill/editor simply stop.
-              if (j.state === 'error' && j.op !== 'setup' && j.error !== '취소됐습니다.') showError(j.error || '작업이 실패했습니다.');
+              if (j.state === 'error' && j.op !== 'setup' && j.code !== 'cancelled') {
+                showError(j.error ? { error: { message: j.error, code: j.code } } : { key: 'err.jobFailed' });
+              }
             }
             return j;
           });
@@ -980,12 +1127,12 @@ const App = () => {
   // and startPolling (whose state lives in refs), so a stale closure of these is harmless.
   const loadDevices = () => window.SoriBridge.devices().then(
     (d) => { setDevices(d.devices); setSetupNeeded(!d.models_ready); return d; },
-    (err) => { showError(errorText(err)); return null; },
+    (err) => { showFailure(err); return null; },
   );
   // 409 = a job is already running (e.g. the setup this app started before a relaunch): just follow it.
   const startSetup = () => window.SoriBridge.setup().then(
     () => startPolling(),
-    (err) => { if (err.status === 409) startPolling(); else showError(errorText(err)); },
+    (err) => { if (err.status === 409) startPolling(); else showFailure(err); },
   );
   React.useEffect(() => {
     loadDevices().then((d) => { if (d && !d.models_ready) startSetup(); });
@@ -1035,7 +1182,7 @@ const App = () => {
       const paths = payload.paths || [];
       const audio = paths.filter(window.SoriBridge.isAudio);
       if (audio.length) setQueue((q) => [...q, ...audio]);
-      if (audio.length < paths.length) showError('오디오 파일만 전사할 수 있습니다.');
+      if (audio.length < paths.length) showError({ key: 'err.audioOnly' });
     });
   }, []);
   // Dropped files run one after another (one model job at a time). The job is marked running optimistically so
@@ -1052,7 +1199,7 @@ const App = () => {
       ({ note_id }) => {
         startingRef.current = false;
         setQueue((q) => q.slice(1));
-        setJob((prev) => ({ ...prev, state: 'running', op: 'transcribe', note_id, stage: '준비 중', percent: 0, text: '' }));
+        setJob((prev) => ({ ...prev, state: 'running', op: 'transcribe', note_id, stage: '준비 중', phase: 'loading', percent: 0, text: '' }));
         startPolling();
         refresh();
       },
@@ -1060,24 +1207,24 @@ const App = () => {
         startingRef.current = false;
         if (err.status === 409) { startPolling(); return; }
         setQueue((q) => q.slice(1));
-        showError(`${path.split(/[\\/]/).pop()}: ${errorText(err)}`);
+        showError({ key: 'err.file', vars: { name: path.split(/[\\/]/).pop() }, error: err });
       },
     );
   }, [queue, job, devices, setupNeeded]);
 
-  // The tray's 녹음 시작 item reads ⏹ 녹음 마치기 while a live recording runs.
+  // The tray's 녹음 시작 item reads ⏹ 녹음 마치기 while a live recording runs; tray and window title follow the language.
   const recording = job.state === 'running' && job.op === 'listen';
-  React.useEffect(() => { window.SoriBridge.setRecording(recording); }, [recording]);
+  React.useEffect(() => { window.SoriBridge.setRecording(recording, lang); }, [recording, lang]);
 
   // Ctrl+Shift+R and the tray's 녹음 시작: stop a live recording, or start one with the last chooser choice.
-  // ponytail: the LivePill's "마지막 구간 전사 중…" state only appears for its own button; lift `stopping` into App if needed.
+  // Stopping from here shows 'finishing' in the LivePill too: /live/stop sets the job's phase right away.
   React.useEffect(() => {
     window.SoriBridge.onToggleRecording(() => {
       if (setupNeededRef.current) return;
       const current = jobRef.current;
       if (current.state === 'running') {
-        if (current.op === 'listen') window.SoriBridge.stopLive().catch((err) => showError(errorText(err)));
-        else showError('다른 전사 작업이 진행 중입니다. 끝난 뒤 다시 시작해 주세요.');
+        if (current.op === 'listen') window.SoriBridge.stopLive().catch(showFailure);
+        else showError({ key: 'err.busy' });
         return;
       }
       const list = devicesRef.current;
@@ -1086,13 +1233,13 @@ const App = () => {
       const source = saved.source || 'mic';
       const begin = (mic) => window.SoriBridge.startLive(mic, pickDevice(list, saved.device), source).then(
         ({ note_id }) => { setChooserOpen(false); startPolling(); openNote(note_id); refresh(); },
-        (err) => showError(errorText(err)),
+        showFailure,
       );
       if (source === 'system') { begin(''); return; }
       window.SoriBridge.mics().then((mics) => {
         const mic = mics.includes(saved.mic) ? saved.mic : mics[0];
-        if (mic) begin(mic); else showError('사용할 수 있는 마이크를 찾지 못했습니다.');
-      }, (err) => showError(errorText(err)));
+        if (mic) begin(mic); else showError({ key: 'err.noMicFound' });
+      }, showFailure);
     });
   }, []);
 
@@ -1125,7 +1272,7 @@ const App = () => {
       setSelection(new Set());
       refresh();
       const failed = results.find((r) => r.status === 'rejected');
-      if (failed) showError(failed.reason.message || String(failed.reason));
+      if (failed) showFailure(failed.reason);
     });
   };
   const toggleStar = () => {
@@ -1136,20 +1283,20 @@ const App = () => {
   const trashSelected = () => runBulk((id) => window.SoriBridge.updateNote(id, { trashed: true }));
   const restoreSelected = () => runBulk((id) => window.SoriBridge.updateNote(id, { trashed: false }));
   const deleteSelected = () => {
-    if (!window.confirm('선택한 받아쓰기를 영구 삭제할까요? 오디오도 지워집니다.')) return;
+    if (!window.confirm(t('confirm.deleteNotes'))) return;
     runBulk((id) => window.SoriBridge.deleteNote(id));
   };
 
-  const createFolder = (name) => window.SoriBridge.createFolder(name).then(refresh, (err) => showError(err.message || String(err)));
+  const createFolder = (name) => window.SoriBridge.createFolder(name).then(refresh, showFailure);
   const deleteFolderById = (id) => {
-    if (!window.confirm('폴더를 삭제할까요? 받아쓰기는 남습니다.')) return;
+    if (!window.confirm(t('confirm.deleteFolder'))) return;
     window.SoriBridge.deleteFolder(id).then(
       () => {
         if (view === `folder:${id}`) setView('all');
         if (folderFilter === id) setFolderFilter(null); // the deleted folder can no longer filter the table
         refresh();
       },
-      (err) => showError(err.message || String(err)),
+      showFailure,
     );
   };
 
@@ -1159,10 +1306,17 @@ const App = () => {
   };
   const heading = view.startsWith('folder:')
     ? findFolderName(Number(view.slice('folder:'.length)))
-    : ((VIEWS.find(([key]) => key === view) || [])[1] || '');
+    : (VIEWS.includes(view) ? t(`view.${view}`) : '');
 
   // After every hook above (rules of hooks): the first-run download replaces the whole dashboard.
-  if (setupNeeded) return <React.Fragment><SetupScreen job={job} error={error} onRetry={() => { dismissError(); startSetup(); }} /><WindowCaption /></React.Fragment>;
+  if (setupNeeded) {
+    return (
+      <React.Fragment>
+        <SetupScreen job={job} error={error} lang={lang} onLang={changeLang} onRetry={() => { dismissError(); startSetup(); }} />
+        <WindowCaption />
+      </React.Fragment>
+    );
+  }
 
   return (
     <div className={`app${sidebarCollapsed ? ' collapsed' : ''}`}>
@@ -1173,6 +1327,8 @@ const App = () => {
         folderFilter={folderFilter}
         setFolderFilter={setFolderFilter}
         onNewNote={() => setChooserOpen(true)}
+        lang={lang}
+        onLang={changeLang}
       />
       <Sidebar
         view={view}
@@ -1187,8 +1343,8 @@ const App = () => {
       <main className="main">
         {error && (
           <div className="banner">
-            <span>{error}</span>
-            <button className="banner-close" aria-label="닫기" onClick={dismissError}>×</button>
+            <span><Msg m={error} /></span>
+            <button className="banner-close" aria-label={t('caption.close')} onClick={dismissError}>×</button>
           </div>
         )}
         {openNoteId ? (
@@ -1239,7 +1395,7 @@ const App = () => {
       {!openNoteId && <JobPill job={job} queued={queue.length} />}
       {dragging && (
         <div className="drop-overlay" aria-hidden="true">
-          <div className="drop-hint">오디오 파일을 여기에 끌어 놓으세요</div>
+          <div className="drop-hint">{t('drop.hint')}</div>
         </div>
       )}
       <WindowCaption />

@@ -14,6 +14,7 @@
     if (!response.ok) {
       const error = new Error(data.error || response.statusText);
       error.status = response.status;
+      error.code = data.code; // stable id for the messages the UI translates (busy, invalid_file, …)
       throw error;
     }
     return data;
@@ -37,13 +38,14 @@
     startLive: (mic, device, source) => call('POST', '/live', { mic, device, source }),
     stopLive: () => call('POST', '/live/stop', {}),
     job: () => call('GET', '/job'),
-    pickAudio: () => tauri.dialog.open({ multiple: false, directory: false, filters: [{ name: '오디오', extensions: AUDIO }] }),
+    pickAudio: (filterName) => tauri.dialog.open({ multiple: false, directory: false, filters: [{ name: filterName, extensions: AUDIO }] }),
     // Tauri's native drag & drop (paths, not File objects); type is enter | over | leave | drop.
     onDrag: (handler) => ['enter', 'over', 'leave', 'drop'].forEach((type) =>
       tauri.event.listen(`tauri://drag-${type}`, (event) => handler(type, event.payload || {}))),
-    setRecording: (recording) => tauri.core.invoke('set_recording', { recording }).catch(() => {}),
+    // Tray labels, tray tooltip and window title follow the recording state and the UI language.
+    setRecording: (recording, lang) => tauri.core.invoke('set_recording', { recording, lang }).catch(() => {}),
     onToggleRecording: (handler) => tauri.event.listen('toggle-recording', handler),
     isAudio: (path) => AUDIO.includes(String(path).split('.').pop().toLowerCase()),
-    pickSavePath: (defaultName) => tauri.dialog.save({ defaultPath: defaultName, filters: [{ name: '텍스트 파일', extensions: ['txt'] }] }),
+    pickSavePath: (defaultName, filterName) => tauri.dialog.save({ defaultPath: defaultName, filters: [{ name: filterName, extensions: ['txt'] }] }),
   });
 })();
