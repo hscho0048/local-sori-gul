@@ -7,7 +7,7 @@ const STRINGS = {
     newNote: '+ 새 받아쓰기', details: '자세히', language: '언어',
     'view.all': '전체 보드', 'view.starred': '중요 보드', 'view.live': '미완료 녹음', 'view.trash': '휴지통',
     'col.title': '보드 이름', 'col.duration': '길이', 'col.folder': '폴더 위치', 'col.created': '생성일',
-    'sidebar.mine': '내 받아쓰기', 'sidebar.folders': '폴더', 'sidebar.collapse': '사이드바 접기',
+    'sidebar.mine': '내 받아쓰기', 'sidebar.folders': '폴더', 'sidebar.collapse': '사이드바 접기', 'sidebar.expand': '사이드바 펼치기',
     'folder.add': '폴더 추가', 'folder.delete': '폴더 삭제',
     'row.interrupted': '녹음 중단됨', 'row.select': '{title} 선택',
     'table.empty': '받아쓰기가 없습니다.', 'table.trashEmpty': '휴지통이 비어 있습니다.', 'table.selectAll': '전체 선택',
@@ -61,7 +61,7 @@ const STRINGS = {
     newNote: '+ New transcription', details: 'Details', language: 'Language',
     'view.all': 'All', 'view.starred': 'Starred', 'view.live': 'Unfinished recordings', 'view.trash': 'Trash',
     'col.title': 'Name', 'col.duration': 'Length', 'col.folder': 'Folder', 'col.created': 'Created',
-    'sidebar.mine': 'My transcripts', 'sidebar.folders': 'Folders', 'sidebar.collapse': 'Collapse sidebar',
+    'sidebar.mine': 'My transcripts', 'sidebar.folders': 'Folders', 'sidebar.collapse': 'Collapse sidebar', 'sidebar.expand': 'Expand sidebar',
     'folder.add': 'Add folder', 'folder.delete': 'Delete folder',
     'row.interrupted': 'Recording interrupted', 'row.select': 'Select {title}',
     'table.empty': 'No transcripts yet.', 'table.trashEmpty': 'Trash is empty.', 'table.selectAll': 'Select all',
@@ -858,6 +858,19 @@ const TopBar = ({ query, setQuery, folders, folderFilter, setFolderFilter, onNew
   );
 };
 
+// Stroke icons for the sidebar (inline SVG, like the caption glyphs, so no icon font is needed).
+const NAV_ICONS = {
+  all: <path d="M4 6h16M4 12h16M4 18h10" />,
+  starred: <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" />,
+  live: <React.Fragment><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" /></React.Fragment>,
+  trash: <path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13" />,
+  folder: <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z" />,
+};
+const NavIcon = ({ name }) => (
+  <svg className="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">{NAV_ICONS[name]}</svg>
+);
+
 const Sidebar = ({ view, setView, liveCount, folders, onCreateFolder, onDeleteFolder, collapsed, setCollapsed }) => {
   const [addingFolder, setAddingFolder] = React.useState(false);
   const [folderName, setFolderName] = React.useState('');
@@ -869,20 +882,26 @@ const Sidebar = ({ view, setView, liveCount, folders, onCreateFolder, onDeleteFo
     setFolderName('');
   };
 
+  // Collapsed, the sidebar is an icon rail: the name moves to the tooltip / accessible name, and folders (which would
+  // all show the same icon) stay in the expanded sidebar.
   return (
     <nav className="sidebar">
       {!collapsed && <div className="sidebar-label">{t('sidebar.mine')}</div>}
       {VIEWS.map((key) => (
-        <button key={key} className={`nav-item${view === key ? ' active' : ''}`} onClick={() => setView(key)}>
-          <span>{collapsed ? t(`view.${key}`)[0] : t(`view.${key}`)}</span>
+        <button key={key} className={`nav-item${view === key ? ' active' : ''}`} onClick={() => setView(key)}
+          title={collapsed ? t(`view.${key}`) : undefined} aria-label={collapsed ? t(`view.${key}`) : undefined}>
+          <NavIcon name={key} />
+          {!collapsed && <span className="nav-label">{t(`view.${key}`)}</span>}
           {key === 'live' && liveCount > 0 && <span className="badge">{liveCount}</span>}
         </button>
       ))}
-      <div className="sidebar-row">
-        {!collapsed && <div className="sidebar-label">{t('sidebar.folders')}</div>}
-        <button className="icon-btn" aria-label={t('folder.add')} onClick={() => setAddingFolder(true)}>+</button>
-      </div>
-      {addingFolder && (
+      {!collapsed && (
+        <div className="sidebar-row">
+          <div className="sidebar-label">{t('sidebar.folders')}</div>
+          <button className="icon-btn" aria-label={t('folder.add')} onClick={() => setAddingFolder(true)}>+</button>
+        </div>
+      )}
+      {!collapsed && addingFolder && (
         <input
           autoFocus
           className="folder-input"
@@ -895,17 +914,17 @@ const Sidebar = ({ view, setView, liveCount, folders, onCreateFolder, onDeleteFo
           onBlur={() => { if (folderName.trim() === '') { setAddingFolder(false); setFolderName(''); } else submitFolder(); }}
         />
       )}
-      {folders.map((f) => (
+      {!collapsed && folders.map((f) => (
         <div key={f.id} className="folder-item">
           <button className={`nav-item${view === `folder:${f.id}` ? ' active' : ''}`} onClick={() => setView(`folder:${f.id}`)}>
-            {collapsed ? f.name[0] : f.name}
+            <NavIcon name="folder" />
+            <span className="nav-label">{f.name}</span>
           </button>
-          {!collapsed && (
-            <button className="folder-delete" aria-label={t('folder.delete')} onClick={() => onDeleteFolder(f.id)}>×</button>
-          )}
+          <button className="folder-delete" aria-label={t('folder.delete')} onClick={() => onDeleteFolder(f.id)}>×</button>
         </div>
       ))}
-      <button className="collapse-btn" aria-label={t('sidebar.collapse')} onClick={() => setCollapsed((v) => !v)}>
+      <button className="collapse-btn" aria-label={t(collapsed ? 'sidebar.expand' : 'sidebar.collapse')}
+        title={t(collapsed ? 'sidebar.expand' : 'sidebar.collapse')} onClick={() => setCollapsed((v) => !v)}>
         {collapsed ? '»' : '«'}
       </button>
     </nav>
