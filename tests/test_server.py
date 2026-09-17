@@ -186,6 +186,28 @@ class ServerTests(unittest.TestCase):
         self.wait_for("running")
         self.assertIs(self.calls[1][1]["speakers"], True)
 
+    def test_new_notes_start_in_the_open_folder(self):
+        from library import Library
+        library = Library()
+        try:
+            work = library.create_folder("회의")
+        finally:
+            library.close()
+        self.assertEqual(self.request("POST", "/transcribe", {"path": self.audio(), "folder_id": "회의"})[0], 400)
+        _, body = self.request("POST", "/transcribe", {"path": self.audio(), "folder_id": work})
+        self.release.set()
+        self.wait_for("done")
+        self.release.clear()
+        _, live = self.request("POST", "/live", {"source": "system", "folder_id": work})
+        self.request("POST", "/live/stop", {})
+        self.wait_for("done")
+        _, loose = self.request("POST", "/transcribe", {"path": self.audio()})
+        self.release.set()
+        self.wait_for("done")
+        folder = [n["id"] for n in self.request("GET", f"/notes?view=folder:{work}")[1]]
+        self.assertEqual(sorted(folder), sorted([body["note_id"], live["note_id"]]))
+        self.assertNotIn(loose["note_id"], folder)
+
     def test_setup_progress_fields(self):
         emit = server.job_emitter("setup", None)
         server.JOB = {"state": "running", "op": "setup", "ready": [], "file": "", "progress": [], "percent": 0}

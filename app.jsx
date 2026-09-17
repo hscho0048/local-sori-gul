@@ -184,9 +184,11 @@ const SOURCES = ['mic', 'system', 'both'];
 // Last live-recording choice, reused by the chooser and by Ctrl+Shift+R / the tray.
 const loadLive = () => { try { return JSON.parse(localStorage.getItem('sori.live')) || {}; } catch (e) { return {}; } };
 const saveLive = (value) => { try { localStorage.setItem('sori.live', JSON.stringify({ ...loadLive(), ...value })); } catch (e) { /* private mode: not remembered */ } };
+// New notes start in the folder open in the sidebar.
+const openFolder = (view) => (view.startsWith('folder:') ? Number(view.slice('folder:'.length)) : null);
 const pickDevice = (devices, wanted) => (devices.some((d) => d.id === wanted) ? wanted : (devices[0] ? devices[0].id : ''));
 
-const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
+const Chooser = ({ open, job, devices, folderId, onClose, startPolling, openNote }) => {
   const [step, setStep] = React.useState('choose');
   const [device, setDevice] = React.useState('');
   const [source, setSource] = React.useState('mic');
@@ -239,7 +241,7 @@ const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
     window.SoriBridge.pickAudio(t('filter.audio')).then((path) => {
       if (!path) return;
       saveLive({ device, speakers });
-      window.SoriBridge.transcribe(path, device, speakers).then(
+      window.SoriBridge.transcribe(path, device, speakers, folderId).then(
         ({ note_id }) => { onClose(); startPolling(); openNote(note_id); },
         fail,
       );
@@ -260,7 +262,7 @@ const Chooser = ({ open, job, devices, onClose, startPolling, openNote }) => {
   const startRecording = () => {
     setErrorMsg(null);
     saveLive({ device, mic, source });
-    window.SoriBridge.startLive(source === 'system' ? '' : mic, device, source).then(
+    window.SoriBridge.startLive(source === 'system' ? '' : mic, device, source, folderId).then(
       ({ note_id }) => { onClose(); startPolling(); openNote(note_id); },
       fail,
     );
@@ -1036,7 +1038,7 @@ const App = () => {
   const [devices, setDevices] = React.useState(null); // null = GET /devices hasn't answered yet
   const [setupNeeded, setSetupNeeded] = React.useState(false);
   const [dragging, setDragging] = React.useState(false);
-  const [queue, setQueue] = React.useState([]); // dropped audio paths not yet started
+  const [queue, setQueue] = React.useState([]); // dropped audio not yet started: { path, folderId } (the folder open at the drop)
   // Read by the once-registered Tauri event listeners below, which would otherwise see the first render's values.
   const jobRef = React.useRef(job);
   jobRef.current = job;
@@ -1200,7 +1202,8 @@ const App = () => {
       if (type !== 'drop' || setupNeededRef.current) return; // no models yet: nothing to transcribe with
       const paths = payload.paths || [];
       const audio = paths.filter(window.SoriBridge.isAudio);
-      if (audio.length) setQueue((q) => [...q, ...audio]);
+      const folderId = openFolder(viewRef.current);
+      if (audio.length) setQueue((q) => [...q, ...audio.map((path) => ({ path, folderId }))]);
       if (audio.length < paths.length) showError({ key: 'err.audioOnly' });
     });
   }, []);
@@ -1213,8 +1216,8 @@ const App = () => {
   React.useEffect(() => {
     if (!queue.length || !devices || setupNeeded || job.state === 'running' || startingRef.current) return;
     startingRef.current = true;
-    const path = queue[0];
-    window.SoriBridge.transcribe(path, pickDevice(devices, loadLive().device), loadLive().speakers !== false).then(
+    const { path, folderId } = queue[0];
+    window.SoriBridge.transcribe(path, pickDevice(devices, loadLive().device), loadLive().speakers !== false, folderId).then(
       ({ note_id }) => {
         startingRef.current = false;
         setQueue((q) => q.slice(1));
@@ -1250,7 +1253,7 @@ const App = () => {
       if (!list || !list.length) return;
       const saved = loadLive();
       const source = saved.source || 'mic';
-      const begin = (mic) => window.SoriBridge.startLive(mic, pickDevice(list, saved.device), source).then(
+      const begin = (mic) => window.SoriBridge.startLive(mic, pickDevice(list, saved.device), source, openFolder(viewRef.current)).then(
         ({ note_id }) => { setChooserOpen(false); startPolling(); openNote(note_id); refresh(); },
         showFailure,
       );
@@ -1409,7 +1412,8 @@ const App = () => {
           </React.Fragment>
         )}
       </main>
-      <Chooser open={chooserOpen} job={job} devices={devices} onClose={() => setChooserOpen(false)} startPolling={startPolling} openNote={openNote} />
+      <Chooser open={chooserOpen} job={job} devices={devices} folderId={openFolder(view)} onClose={() => setChooserOpen(false)}
+        startPolling={startPolling} openNote={openNote} />
       <LivePill job={job} />
       {!openNoteId && <JobPill job={job} queued={queue.length} />}
       {dragging && (

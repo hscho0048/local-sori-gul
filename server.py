@@ -114,6 +114,14 @@ def device(body):
     return value
 
 
+def folder(body):
+    """The folder the new note starts in (the one open in the sidebar), or None."""
+    value = body.get("folder_id")
+    if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+        raise HttpError(400, "folder_id must be a folder id or null")
+    return value
+
+
 def ensure_idle():
     if JOB.get("state") == "running":
         raise HttpError(409, "다른 전사 작업이 진행 중입니다. 끝난 뒤 다시 시작해 주세요.", "busy")
@@ -330,8 +338,9 @@ def transcribe(library, body, query):
     speakers = body.get("speakers", True)
     if not isinstance(speakers, bool):
         raise HttpError(400, "speakers must be true or false")
+    target = folder(body)
     ensure_idle()
-    note_id = library.create(path.stem, "audio", audio=path)
+    note_id = library.create(path.stem, "audio", audio=path, folder_id=target)
     start_job("transcribe", {"path": str(library.audio_path(library.get(note_id))), "device": selected,
                              "speakers": speakers}, note_id)
     return {"note_id": note_id}
@@ -345,8 +354,9 @@ def live(library, body, query):
     if source != "system" and not body.get("mic"):
         raise HttpError(400, "마이크를 선택해 주세요.", "no_mic")
     selected = device(body)
+    target = folder(body)
     ensure_idle()
-    note_id = library.create(f"실시간 전사 {datetime.now():%Y-%m-%d %H:%M}", "live")
+    note_id = library.create(f"실시간 전사 {datetime.now():%Y-%m-%d %H:%M}", "live", folder_id=target)
     start_job("listen", {"mic": body.get("mic", ""), "source": source, "device": selected, "note_id": note_id},
               note_id)
     return {"note_id": note_id}

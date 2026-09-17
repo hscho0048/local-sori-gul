@@ -66,6 +66,12 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.lib.create_folder("  ")
 
+    def test_a_new_note_can_start_in_a_folder_that_still_exists(self):
+        work = self.lib.create_folder("회의")
+        self.assertEqual(self.lib.get(self.lib.create("안건", "audio", folder_id=work))["folder_id"], work)
+        self.lib.delete_folder(work)
+        self.assertIsNone(self.lib.get(self.lib.create("안건", "live", folder_id=work))["folder_id"])  # deleted meanwhile
+
     def test_keywords_strip_particles_and_skip_filler(self):
         text = "화자 1: 예산 회의에서 예산을 확정했습니다. 그리고 회의가 길었습니다. 예산"
         self.assertEqual(keywords(text, 2), ["예산", "회의"])

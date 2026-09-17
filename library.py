@@ -77,7 +77,8 @@ class Library:
         self.db.close()
 
     # ---- notes ---------------------------------------------------------
-    def create(self, title, source, transcript="", audio=None):
+    def create(self, title, source, transcript="", audio=None, folder_id=None):
+        """folder_id: the folder the user had open; a folder deleted in the meantime just leaves the note unfiled."""
         now = time.time()
         name = None
         if audio:
@@ -86,8 +87,11 @@ class Library:
             name = f"{int(now)}-{Path(audio).name}"
             shutil.copy2(audio, folder / name)
         with self.db:
-            return self.db.execute("INSERT INTO notes(title, created, updated, source, audio, transcript) VALUES (?,?,?,?,?,?)",
-                                   (title.strip() or "제목 없음", now, now, source, name, transcript)).lastrowid
+            if folder_id is not None and not self.db.execute("SELECT 1 FROM folders WHERE id = ?", (folder_id,)).fetchone():
+                folder_id = None
+            return self.db.execute(
+                "INSERT INTO notes(title, created, updated, source, audio, transcript, folder_id) VALUES (?,?,?,?,?,?,?)",
+                (title.strip() or "제목 없음", now, now, source, name, transcript, folder_id)).lastrowid
 
     def update(self, note_id, **fields):
         unknown = set(fields) - FIELDS
