@@ -85,6 +85,9 @@ class ServerTests(unittest.TestCase):
             (Path(home) / "models" / "a.onnx").write_text("")
             (Path(home) / "models" / "speaker" / "b.onnx").write_text("")
             self.assertTrue(server.models_ready())
+            # ffmpeg is downloaded by the same first-run setup (the installer does not bundle it)
+            with patch("server.ffmpeg_path", side_effect=RuntimeError("오디오 디코더가 없습니다.")):
+                self.assertFalse(server.models_ready())
 
     def test_transcribe_rejects_unprobed_device_and_defaults_to_the_first(self):
         self.assertEqual(self.request("POST", "/transcribe", {"path": self.audio(), "device": "gpu"})[0], 400)

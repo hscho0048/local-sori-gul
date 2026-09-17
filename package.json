@@ -1,6 +1,7 @@
 {
   "name": "sori-gul",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "build": "node scripts/build-tauri-assets.cjs",
     "tauri": "tauri",

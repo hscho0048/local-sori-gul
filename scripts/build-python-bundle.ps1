@@ -1,4 +1,4 @@
-# Builds src-tauri\python-<arch>\: python.org embeddable CPython, backend .py files, ffmpeg, app-local VC++ runtime,
+# Builds src-tauri\python-<arch>\: python.org embeddable CPython, backend .py files, app-local VC++ runtime,
 # and wheels for that arch (pip download --platform, no PyInstaller). Run from any directory.
 param([Parameter(Mandatory = $true)][ValidateSet('arm64', 'x64')][string]$Arch)
 $ErrorActionPreference = 'Stop'
@@ -11,7 +11,7 @@ $platform = @{ arm64 = 'win_arm64'; x64 = 'win_amd64' }[$Arch]
 $embed = @{ arm64 = 'arm64'; x64 = 'amd64' }[$Arch]
 $hostPython = Join-Path $root '.venv\Scripts\python.exe'
 if (-not (Test-Path $hostPython)) { throw 'Run setup.cmd first (the build uses .venv''s pip).' }
-if (-not (Test-Path (Join-Path $root 'tools\ffmpeg.exe'))) { throw 'tools\ffmpeg.exe is missing: run setup.cmd first.' }
+# ffmpeg is not bundled (its Windows build is GPL): the app's first-run setup downloads it with the models.
 
 New-Item -ItemType Directory -Force $cache | Out-Null
 if (Test-Path $out) { Remove-Item -Recurse -Force $out }
@@ -42,8 +42,6 @@ if ($Arch -eq 'arm64') { Add-Packages 'requirements-whisper-gpu.txt' (Join-Path 
 foreach ($file in 'server.py', 'engine.py', 'jobs.py', 'diarize.py', 'library.py', 'setup_assets.py', 'loopback.py') {
     Copy-Item (Join-Path $root $file) $out
 }
-New-Item -ItemType Directory (Join-Path $out 'tools') | Out-Null
-Copy-Item (Join-Path $root 'tools\ffmpeg.exe'), (Join-Path $root 'tools\LICENSE') (Join-Path $out 'tools')
 
 # onnxruntime needs msvcp140 / vcruntime140_1; ship them app-locally instead of requiring the VC++ redistributable.
 $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath

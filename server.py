@@ -21,7 +21,7 @@ import threading
 from urllib.parse import parse_qs, urlparse
 import wave
 
-from engine import EXTENSIONS, audio_devices
+from engine import EXTENSIONS, audio_devices, ffmpeg_path
 from jobs import run_job, worker_python
 from library import Library, keywords
 from setup_assets import ROOT, required_files
@@ -96,6 +96,11 @@ def probe_devices():
 
 
 def models_ready():
+    """Everything the first-run setup job provides: the model files and ffmpeg (downloaded too, not bundled)."""
+    try:
+        ffmpeg_path()
+    except RuntimeError:
+        return False
     return all((ROOT / "models" / name).is_file() for name in required_files())
 
 

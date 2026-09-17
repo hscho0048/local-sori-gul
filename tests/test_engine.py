@@ -242,6 +242,18 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(worker_environment("listen", {"device": "gpu"}), ".venv-whisper-gpu")
         self.assertEqual(worker_environment("listen", {}), ".venv")
 
+    def test_audio_devices_reads_korean_names_as_utf8(self):
+        # ffmpeg writes DirectShow names as UTF-8; on Korean Windows the locale codec (cp949) garbled them.
+        import subprocess
+        import sys
+        from engine import audio_devices
+        name = "마이크 배열(인텔® 스마트 사운드 기술)"
+        script = f"import sys; sys.stderr.buffer.write('[dshow] \"{name}\" (audio)\\n'.encode('utf-8'))"
+        real_run = subprocess.run
+        with patch("engine.subprocess.run", side_effect=lambda command, **kwargs: real_run([sys.executable, "-c", script], **kwargs)), \
+                patch("engine.ffmpeg_path", return_value=Path("ffmpeg.exe")):
+            self.assertEqual(audio_devices(), [name])
+
 
 class LayoutTests(unittest.TestCase):
     def test_sorigul_home_moves_data_but_not_code(self):

@@ -2,6 +2,7 @@
 name = "sori-gul"
 version = "0.1.0"
 description = "소리글 desktop app"
+license = "MIT"
 edition = "2021"
 
 [build-dependencies]

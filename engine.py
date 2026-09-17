@@ -71,7 +71,8 @@ def ffmpeg_path(ffmpeg=None):
 def audio_devices(ffmpeg=None):
     """Microphone names as DirectShow reports them to ffmpeg (Windows)."""
     listing = subprocess.run([str(ffmpeg_path(ffmpeg)), "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
-                             capture_output=True, text=True, errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                             capture_output=True, encoding="utf-8", errors="replace",  # ffmpeg prints UTF-8, not the locale codec
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     return re.findall(r'"([^"]+)" \(audio\)', listing.stderr)
 
 

@@ -14,3 +14,10 @@ src-tauri/target/
 src-tauri/gen/
 .superpowers/
 src-tauri/python-*/
+
+# editors / OS / logs
+.claude/
+.vscode/
+.idea/
+Thumbs.db
+*.log

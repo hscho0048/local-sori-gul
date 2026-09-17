@@ -15,5 +15,11 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*"
     }
   },
-  "bundle": { "active": true, "targets": "all", "icon": ["icons/icon.ico", "icons/icon.png"] }
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "license": "MIT",
+    "resources": { "../LICENSE": "LICENSE.txt", "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md" }
+  }
 }

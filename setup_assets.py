@@ -137,7 +137,8 @@ def main(emit=log, whisper_gpu=False):
     if not static.is_file():
         emit("stage", "화자 분리 모델 고정 형태로 변환 중… (처음 한 번)")
         static_model(ROOT / "models" / "speaker" / MODEL_FILE, static)  # both venvs read this fixed-shape copy
-    if not (CODE / "tools" / "ffmpeg.exe").is_file():  # the installed app bundles ffmpeg
+    # ffmpeg (a GPL build) is downloaded here rather than shipped in the installer; skip it once present.
+    if not any((folder / "tools" / "ffmpeg.exe").is_file() for folder in (ROOT, CODE)):
         wheel = ROOT / "tools" / "ffmpeg.whl"
         download("https://files.pythonhosted.org/packages/2c/c6/fa760e12a2483469e2bf5058c5faff664acf66cadb4df2ad6205b016a73d/imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl", wheel,
                  "02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a", emit=emit)
