@@ -22,12 +22,43 @@ fn bridge(state: tauri::State<Bridge>) -> (String, String) {
     (state.url.clone(), state.token.clone())
 }
 
-struct RecordItem(MenuItem<tauri::Wry>);
+/// Tray items: open, record, quit.
+struct TrayItems([MenuItem<tauri::Wry>; 3]);
 
-/// The tray's record item follows the app: the frontend reports whenever a live recording starts or ends.
+/// Tray and title follow the app: the frontend reports whenever a live recording starts or ends or the language changes.
 #[tauri::command]
-fn set_recording(recording: bool, item: tauri::State<RecordItem>) {
-    let _ = item.0.set_text(if recording { "⏹ 녹음 마치기" } else { "녹음 시작" });
+fn set_recording(recording: bool, lang: String, app: AppHandle, items: tauri::State<TrayItems>) {
+    let (texts, title) = tray_texts(&lang, recording);
+    for (item, text) in items.0.iter().zip(texts) {
+        let _ = item.set_text(text);
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_title(title);
+    }
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(title));
+    }
+}
+
+/// (open, record, quit) labels and the window title; anything but "en" is Korean.
+fn tray_texts(lang: &str, recording: bool) -> ([&'static str; 3], &'static str) {
+    match (lang == "en", recording) {
+        (false, false) => (["열기", "녹음 시작", "종료"], "소리글"),
+        (false, true) => (["열기", "⏹ 녹음 마치기", "종료"], "소리글"),
+        (true, false) => (["Open", "Start recording", "Quit"], "Sorigul"),
+        (true, true) => (["Open", "⏹ Stop recording", "Quit"], "Sorigul"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tray_follows_language_and_recording() {
+        assert_eq!(super::tray_texts("ko", false), (["열기", "녹음 시작", "종료"], "소리글"));
+        assert_eq!(super::tray_texts("ko", true).0[1], "⏹ 녹음 마치기");
+        assert_eq!(super::tray_texts("en", false), (["Open", "Start recording", "Quit"], "Sorigul"));
+        assert_eq!(super::tray_texts("en", true).0[1], "⏹ Stop recording");
+    }
 }
 
 /// One app per data folder. A second launch (a double double-click) used to come up without a window but with its
@@ -46,16 +77,19 @@ extern "system" {
 }
 
 /// Brings the already running instance's window to the front.
-// ponytail: found by its title "소리글"; another top-level window with exactly that title would be picked instead —
-// switch to a named pipe / tauri-plugin-single-instance if that ever happens.
+// ponytail: found by its title "소리글" or "Sorigul" (it follows the language); another top-level window with exactly
+// that title would be picked instead — switch to a named pipe / tauri-plugin-single-instance if that ever happens.
 fn focus_running_instance() {
-    let title: Vec<u16> = "소리글".encode_utf16().chain(Some(0)).collect();
-    unsafe {
-        let window = FindWindowW(std::ptr::null(), title.as_ptr());
+    for name in ["소리글", "Sorigul"] {
+        let title: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+        let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
         if window != 0 {
             // SW_RESTORE only when minimized: on a maximized window it would un-maximize it.
-            ShowWindow(window, if IsIconic(window) != 0 { 9 } else { 5 }); // SW_RESTORE : SW_SHOW
-            SetForegroundWindow(window);
+            unsafe {
+                ShowWindow(window, if IsIconic(window) != 0 { 9 } else { 5 }); // SW_RESTORE : SW_SHOW
+                SetForegroundWindow(window);
+            }
+            return;
         }
     }
 }
@@ -145,8 +179,8 @@ fn main() {
             }
             let open = MenuItem::with_id(app, "open", "열기", true, None::<&str>)?;
             let record = MenuItem::with_id(app, "record", "녹음 시작", true, None::<&str>)?;
-            app.manage(RecordItem(record.clone()));
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
+            app.manage(TrayItems([open.clone(), record.clone(), quit.clone()]));
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("소리글")
