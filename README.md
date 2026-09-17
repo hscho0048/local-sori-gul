@@ -1,7 +1,9 @@
-# 소리글
+# 소리글 (Sorigul)
 
 인터넷 없이 내 PC에서 한국어 음성을 받아쓰는 Windows 데스크톱 앱입니다.
 Whisper large-v3-turbo를 Snapdragon NPU·GPU, 인텔 GPU·NPU 또는 CPU에서 실행하고, 오디오와 받아쓰기는 PC 밖으로 나가지 않습니다.
+
+> An offline Korean speech-to-text app for Windows (Snapdragon NPU/GPU, Intel GPU/NPU or CPU). The UI is available in Korean and English.
 
 ## 주요 기능
 
@@ -96,10 +98,13 @@ npm run tauri:build:x64     # scripts\build-python-bundle.ps1 x64 후 x86_64 NSI
 | `loopback.py` | WASAPI 시스템 소리 캡처 (ctypes) |
 | `library.py` | SQLite 받아쓰기 보관함 |
 | `setup_assets.py` | 첫 실행 모델·ffmpeg 내려받기 |
+| `setup.cmd`, `setup.ps1`, `requirements-*.txt` | 개발 환경(가상환경·모델) 준비 |
+| `scripts/` | 화면 빌드, 설치 파일용 Python 번들, 서드파티 고지 생성 |
+| `tests/` | 백엔드 단위 테스트 |
 
 ## 라이선스
 
 소리글은 [MIT 라이선스](LICENSE)로 배포합니다.
 설치 파일에 포함되거나 첫 실행 때 내려받는 서드파티 구성 요소의 라이선스는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있습니다.
-에이투지체(A2Z) 글꼴은 [SIL Open Font License 1.1](A2Z/OFL.txt)을 따릅니다.
+에이투지체(A2Z) 글꼴(화면에 쓰는 Regular·Medium·SemiBold·Bold 네 굵기만 포함)은 [SIL Open Font License 1.1](A2Z/OFL.txt)을 따릅니다.
 첫 실행 때 받는 ffmpeg는 GPL-3.0 빌드이며, 설치 파일에는 포함되지 않습니다.

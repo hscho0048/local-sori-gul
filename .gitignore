@@ -13,6 +13,7 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 .superpowers/
+docs/superpowers/
 src-tauri/python-*/
 
 # editors / OS / logs
