@@ -112,6 +112,7 @@ def setup_whisper_gpu(emit=log):
             return
     source = folder / "encoder_model_fp16.onnx"
     download(f"{GPU_BASE}/{source.name}", source, GPU_FILES[source.name], emit=emit)
+    emit("phase", "converting")
     emit("stage", "GPU 인코더를 고정 형태로 변환하는 중…")
     model = onnx.load(str(source))
     for value, shape in [(model.graph.input[0], (1, 128, 3000)), (model.graph.output[0], (1, 1500, 1280))]:
@@ -141,6 +142,7 @@ def main(emit=log, whisper_gpu=False):
     download(SPEAKER_URL, ROOT / "models" / "speaker" / MODEL_FILE, SPEAKER_SHA, emit)
     static = ROOT / "models" / "speaker" / f"speaker_static_{FRAMES}.onnx"
     if not static.is_file():
+        emit("phase", "converting")
         emit("stage", "화자 분리 모델 고정 형태로 변환 중… (처음 한 번)")
         static_model(ROOT / "models" / "speaker" / MODEL_FILE, static)  # both venvs read this fixed-shape copy
     emit("step", "audio")

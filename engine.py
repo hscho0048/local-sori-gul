@@ -237,6 +237,7 @@ class WhisperNPU:
     def transcribe(self, path, speakers=None):
         """Whole-file transcription. With `speakers` (a diarize.SpeakerEmbedder) the recording is first split into
         speaker spans and Whisper chunks never cross a speaker change, so each paragraph can carry its speaker."""
+        self.emit("phase", "decoding")  # phase: the UI's language-neutral status; stage stays the Korean detail
         self.emit("stage", "오디오를 16 kHz 모노로 변환하는 중…")
         with tempfile.TemporaryDirectory(prefix="audio2text-") as folder:
             pcm_path = Path(folder) / "audio.pcm"
@@ -247,12 +248,14 @@ class WhisperNPU:
                 self.emit("duration", total / RATE)
                 if speakers is not None:
                     from diarize import diarize
+                    self.emit("phase", "diarizing")
                     self.emit("stage", "화자 분석 중…")
                     spans = diarize(pcm, speakers, self.emit, self.cancel)
                     pending = [(start, end, label) for a, b, label in spans for start, end in chunks(pcm, a, b)]
                 else:
                     pending = [(start, end, None) for start, end in chunks(pcm)]
                 completed = []  # (speaker label or None, text)
+                self.emit("phase", "transcribing")
                 while pending:
                     check_cancel(self.cancel)
                     start, end, label = pending.pop(0)
@@ -316,6 +319,7 @@ class WhisperNPU:
             seconds += len(segment) / RATE
             if np.sqrt(np.mean(segment.astype(np.float32) ** 2)) < SILENCE_RMS:
                 return
+            self.emit("phase", "finishing" if stop.is_set() else "transcribing")
             self.emit("stage", f"🎙 녹음 중 · {seconds:.0f}초 · 방금 구간 전사 중")
             audio = segment.astype(np.float32) / 32768.0
             text, truncated = self.infer(audio, lambda text, count: None)
@@ -327,9 +331,12 @@ class WhisperNPU:
                 completed.append(text)
                 self.emit("text", "\n\n".join(completed))
             self.emit("stage", f"🎙 녹음 중 · {seconds:.0f}초")
+            if not stop.is_set():
+                self.emit("phase", "recording")
 
         try:
             self.emit("stage", f"🎙 녹음 중 · {label}")
+            self.emit("phase", "recording")
             while not stop.is_set():
                 check_cancel(self.cancel)
                 with lock:
@@ -344,6 +351,7 @@ class WhisperNPU:
                     raise RuntimeError(f"{kind} 입력이 끊겼습니다.\n" + detail)
                 else:
                     self.cancel.wait(0.25)
+            self.emit("phase", "finishing")
             process.terminate()
             reader.join(3)
             with lock:

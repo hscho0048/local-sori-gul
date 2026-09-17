@@ -18,6 +18,7 @@ import sys
 import sysconfig
 import tempfile
 import threading
+import time
 from urllib.parse import parse_qs, urlparse
 import wave
 
@@ -45,9 +46,10 @@ finished = ""  # text of completed chunks only (updated on "text" events, not "p
 
 
 class HttpError(Exception):
-    def __init__(self, status, message):
+    def __init__(self, status, message, code=None):
         super().__init__(message)
         self.status = status
+        self.code = code  # machine-readable reason for the UI; None = no "code" key in the body
 
 
 def route(method, pattern):
@@ -114,7 +116,7 @@ def device(body):
 
 def ensure_idle():
     if JOB.get("state") == "running":
-        raise HttpError(409, "다른 전사 작업이 진행 중입니다. 끝난 뒤 다시 시작해 주세요.")
+        raise HttpError(409, "다른 전사 작업이 진행 중입니다. 끝난 뒤 다시 시작해 주세요.", "busy")
 
 
 def start_job(operation, payload, note_id):
@@ -122,16 +124,38 @@ def start_job(operation, payload, note_id):
     with JOB_LOCK:
         ensure_idle()
         if CANCEL.is_set():
-            raise HttpError(503, "앱을 종료하는 중입니다.")
+            raise HttpError(503, "앱을 종료하는 중입니다.", "shutting_down")
         FINISH.clear()
         JOB_CANCEL = threading.Event()
         finished = ""
         JOB = {"state": "running", "op": operation, "note_id": note_id, "stage": "준비 중", "text": "", "percent": 0,
-               "error": None, "file": "", "ready": [], "progress": [], "step": "", "size": 0}
+               "error": None, "file": "", "ready": [], "progress": [], "step": "", "size": 0, "phase": "loading",
+               "source": payload.get("source") if operation == "listen" else None, "recorded_seconds": 0, "code": None}
         # a new dict, not JOB.clear()+update(), so a concurrent GET /job (reading the JOB global with no lock)
         # never observes {}
     WORKER = threading.Thread(target=run, args=(operation, payload, note_id, JOB_CANCEL), daemon=True)
     WORKER.start()
+
+
+def stop_clock():
+    """Freeze recorded_seconds. Written before the timestamp goes, so GET /job never sees neither."""
+    since = JOB.get("recording_since")
+    if since is not None:
+        JOB["recorded_seconds"] = time.monotonic() - since
+        JOB.pop("recording_since", None)
+
+
+def set_phase(value):
+    """recorded_seconds: 0 until the first "recording", then live via recording_since (GET /job), frozen at
+    "finishing". "finishing" is final: the worker may still emit "recording"/"transcribing" after ⏹.
+    Callers hold JOB_LOCK (stop_live and the worker's emit race here)."""
+    if JOB.get("phase") == "finishing":
+        return
+    if value == "recording" and "recording_since" not in JOB:
+        JOB["recording_since"] = time.monotonic()
+    elif value == "finishing":
+        stop_clock()
+    JOB["phase"] = value
 
 
 def job_emitter(operation, note_id):
@@ -142,6 +166,9 @@ def job_emitter(operation, note_id):
         global finished
         if kind == "stage":
             JOB["stage"] = value
+        elif kind == "phase":
+            with JOB_LOCK:
+                set_phase(value)
         elif kind == "duration":
             duration = value
         elif kind == "progress":
@@ -150,8 +177,10 @@ def job_emitter(operation, note_id):
         elif kind == "file":
             JOB["file"] = value
             JOB["stage"] = f"{value} 내려받는 중"
+            JOB["phase"] = "downloading"
         elif kind == "ready":
             JOB["ready"] = JOB.get("ready", []) + [value]
+            JOB["phase"] = "checking"
         elif kind in ("step", "size"):  # setup: current group (speech / speaker / audio) and total download MiB
             JOB[kind] = value
         elif kind == "text":
@@ -184,6 +213,8 @@ def job_emitter(operation, note_id):
                 write_error = str(error)
             # JOB state must land on "done" or "error" even if the write above raised, so the job
             # slot never stays stuck on "running" (fix 3): no bare DB write before the JOB.update.
+            with JOB_LOCK:
+                stop_clock()
             if write_error is None:
                 JOB.update(state="done", text=value, percent=100)
             else:
@@ -195,7 +226,10 @@ def job_emitter(operation, note_id):
                         library.update(note_id, transcript=finished)
             except Exception:
                 pass  # keep the original error/cancel reason; the job slot still frees up below
-            JOB.update(state="error", error=str(value or "취소됐습니다."))
+            with JOB_LOCK:
+                stop_clock()  # a live job that failed mid-recording stops counting too
+            code = "cancelled" if kind == "cancelled" else "setup_failed" if operation == "setup" else "failed"
+            JOB.update(state="error", error=str(value or "취소됐습니다."), code=code)
 
     return emit
 
@@ -290,7 +324,7 @@ def cancel_job(library, body, query):
 def transcribe(library, body, query):
     path = Path(body.get("path") or "")
     if not path.is_file() or path.suffix.lower() not in EXTENSIONS:
-        raise HttpError(400, "지원하는 로컬 오디오 파일을 선택해 주세요.")
+        raise HttpError(400, "지원하는 로컬 오디오 파일을 선택해 주세요.", "invalid_file")
     selected = device(body)  # validate before library.create, as /live does, so a bad device doesn't
                               # leave an orphan note + copied audio behind
     speakers = body.get("speakers", True)
@@ -309,7 +343,7 @@ def live(library, body, query):
     if source not in ("mic", "system", "both"):
         raise HttpError(400, "source must be 'mic', 'system' or 'both'")
     if source != "system" and not body.get("mic"):
-        raise HttpError(400, "마이크를 선택해 주세요.")
+        raise HttpError(400, "마이크를 선택해 주세요.", "no_mic")
     selected = device(body)
     ensure_idle()
     note_id = library.create(f"실시간 전사 {datetime.now():%Y-%m-%d %H:%M}", "live")
@@ -320,13 +354,20 @@ def live(library, body, query):
 
 @route("POST", r"/live/stop")
 def stop_live(library, body, query):
+    with JOB_LOCK:  # the same JOB that FINISH stops
+        if JOB.get("state") == "running" and JOB.get("op") == "listen":
+            set_phase("finishing")
     FINISH.set()
     return {"ok": True}
 
 
 @route("GET", r"/job")
 def job(library, body, query):
-    return dict(JOB)
+    result = dict(JOB)
+    since = result.pop("recording_since", None)
+    if since is not None:
+        result["recorded_seconds"] = time.monotonic() - since
+    return result
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -360,6 +401,8 @@ class Handler(BaseHTTPRequestHandler):
                 status, result = 200, function(library, body, query, *match.groups())
         except HttpError as error:
             status, result = error.status, {"error": str(error)}
+            if error.code:
+                result["code"] = error.code
         except (ValueError, TypeError) as error:
             status, result = 400, {"error": str(error)}
         except Exception as error:

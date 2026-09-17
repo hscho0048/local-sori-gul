@@ -197,3 +197,78 @@ class ServerTests(unittest.TestCase):
         emit("size", 3480)
         emit("step", "speaker")
         self.assertEqual((server.JOB["size"], server.JOB["step"]), (3480, "speaker"))
+
+    def test_live_job_reports_phase_source_and_recorded_seconds(self):
+        self.request("POST", "/live", {"mic": "Mic", "source": "both"})
+        self.wait_for("running")
+        status, job = self.request("GET", "/job")
+        self.assertEqual((job["phase"], job["source"], job["recorded_seconds"]), ("loading", "both", 0))
+        emit = server.job_emitter("listen", job["note_id"])
+        emit("phase", "recording")
+        time.sleep(0.2)
+        job = self.request("GET", "/job")[1]
+        self.assertEqual(job["phase"], "recording")
+        self.assertGreaterEqual(job["recorded_seconds"], 0.15)
+        self.assertNotIn("recording_since", job)
+        self.request("POST", "/live/stop", {})
+        frozen = server.JOB["recorded_seconds"]
+        self.assertEqual(server.JOB["phase"], "finishing")
+        time.sleep(0.1)
+        self.assertEqual(self.request("GET", "/job")[1]["recorded_seconds"], frozen)
+        self.wait_for("done")
+
+    def test_file_job_phase_and_cancel_code(self):
+        self.request("POST", "/transcribe", {"path": self.audio()})
+        self.wait_for("running")
+        job = self.request("GET", "/job")[1]
+        self.assertEqual((job["phase"], job["source"], job["code"]), ("loading", None, None))
+        server.job_emitter("transcribe", job["note_id"])("phase", "decoding")
+        self.assertEqual(self.request("GET", "/job")[1]["phase"], "decoding")
+        self.request("POST", "/job/cancel", {})
+        self.wait_for("error")
+        self.assertEqual(server.JOB["code"], "cancelled")
+
+    def test_job_error_codes(self):
+        server.JOB = {"state": "running", "op": "setup"}
+        server.job_emitter("setup", None)("error", "boom")
+        self.assertEqual((server.JOB["error"], server.JOB["code"]), ("boom", "setup_failed"))
+        server.JOB = {"state": "running", "op": "transcribe"}
+        server.job_emitter("transcribe", None)("error", "boom")
+        self.assertEqual(server.JOB["code"], "failed")
+
+    def test_a_failed_live_job_stops_its_clock(self):
+        server.JOB = {"state": "running", "op": "listen", "phase": "loading", "recorded_seconds": 0}
+        emit = server.job_emitter("listen", None)
+        emit("phase", "recording")
+        emit("error", "mic gone")
+        self.assertNotIn("recording_since", server.JOB)
+        frozen = self.request("GET", "/job")[1]["recorded_seconds"]
+        time.sleep(0.05)
+        self.assertEqual(self.request("GET", "/job")[1]["recorded_seconds"], frozen)
+
+    def test_setup_phase_follows_files(self):
+        emit = server.job_emitter("setup", None)
+        server.JOB = {"state": "running", "op": "setup", "ready": [], "phase": "loading"}
+        emit("file", "models/a.bin")
+        self.assertEqual(server.JOB["phase"], "downloading")
+        emit("ready", "models/a.bin")
+        self.assertEqual(server.JOB["phase"], "checking")
+        emit("phase", "converting")
+        self.assertEqual(server.JOB["phase"], "converting")
+
+    def test_error_bodies_carry_codes(self):
+        self.assertEqual(self.request("POST", "/transcribe", {"path": "nope.wav"}),
+                         (400, {"error": "지원하는 로컬 오디오 파일을 선택해 주세요.", "code": "invalid_file"}))
+        self.assertEqual(self.request("POST", "/live", {"source": "mic"})[1]["code"], "no_mic")
+        self.request("POST", "/live", {"mic": "Mic"})
+        self.wait_for("running")
+        status, body = self.request("POST", "/transcribe", {"path": self.audio()})
+        self.assertEqual((status, body["code"]), (409, "busy"))
+        self.request("POST", "/live/stop", {})
+        self.wait_for("done")
+        server.CANCEL.set()
+        try:
+            self.assertEqual(self.request("POST", "/setup", {})[1]["code"], "shutting_down")
+        finally:
+            server.CANCEL.clear()
+        self.assertNotIn("code", self.request("GET", "/notes/999")[1])
