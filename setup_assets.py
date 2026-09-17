@@ -125,18 +125,25 @@ def setup_whisper_gpu(emit=log):
 
 def main(emit=log, whisper_gpu=False):
     """Every model this machine needs, then (with whisper_gpu) the static-shape encoder. Files already present with
-    the right checksum are skipped, so an interrupted first run resumes."""
+    the right checksum are skipped, so an interrupted first run resumes. The first-run screen shows the three
+    ("step", …) groups and the ("size", MiB) total."""
+    emit("size", 3480 if ARM64 else 1640)  # MiB actually downloaded on a fresh install (NPU bundle only on ARM64)
+    emit("step", "speech")
     if ARM64:
         for name, sha in FILES.items():
             download(f"{BASE}/{name}", ROOT / "models" / name, sha, emit)
     for name in ("tokenizer.json", "generation_config.json", "preprocessor_config.json"):
         download(f"https://huggingface.co/openai/whisper-large-v3-turbo/resolve/{TOKENIZER_REV}/{name}", ROOT / "models" / name, emit=emit)
+    if whisper_gpu:
+        setup_whisper_gpu(emit)
+    emit("step", "speaker")
     from diarize import FRAMES, MODEL_FILE, static_model
     download(SPEAKER_URL, ROOT / "models" / "speaker" / MODEL_FILE, SPEAKER_SHA, emit)
     static = ROOT / "models" / "speaker" / f"speaker_static_{FRAMES}.onnx"
     if not static.is_file():
         emit("stage", "화자 분리 모델 고정 형태로 변환 중… (처음 한 번)")
         static_model(ROOT / "models" / "speaker" / MODEL_FILE, static)  # both venvs read this fixed-shape copy
+    emit("step", "audio")
     # ffmpeg (a GPL build) is downloaded here rather than shipped in the installer; skip it once present.
     if not any((folder / "tools" / "ffmpeg.exe").is_file() for folder in (ROOT, CODE)):
         wheel = ROOT / "tools" / "ffmpeg.whl"
@@ -148,8 +155,6 @@ def main(emit=log, whisper_gpu=False):
             for name in archive.namelist():
                 if "license" in name.lower() and not name.endswith("/"):
                     (ROOT / "tools" / Path(name).name).write_bytes(archive.read(name))
-    if whisper_gpu:
-        setup_whisper_gpu(emit)
     emit("stage", "Setup complete. Inference needs no network.")
 
 

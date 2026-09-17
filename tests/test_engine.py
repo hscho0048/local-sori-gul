@@ -448,6 +448,23 @@ class DeviceTests(unittest.TestCase):
 
 
 class SetupAssetTests(unittest.TestCase):
+    def test_setup_reports_its_three_steps_in_order_and_the_download_size(self):
+        import setup_assets
+        events = []
+        with tempfile.TemporaryDirectory() as home, patch("setup_assets.ROOT", Path(home)), \
+                patch("setup_assets.CODE", Path(home)), patch("setup_assets.ARM64", False), \
+                patch("setup_assets.download", side_effect=lambda url, target, *a, **k: events.append(("download", target.name))), \
+                patch("setup_assets.setup_whisper_gpu", side_effect=lambda emit: events.append(("download", "whisper-gpu"))), \
+                patch("diarize.static_model"):
+            (Path(home) / "tools").mkdir()
+            (Path(home) / "tools" / "ffmpeg.exe").write_bytes(b"")  # already present: no ffmpeg download
+            setup_assets.main(lambda kind, value: events.append((kind, value)) if kind in ("step", "size") else None,
+                              whisper_gpu=True)
+        steps = [value for kind, value in events if kind == "step"]
+        self.assertEqual(steps, ["speech", "speaker", "audio"])
+        self.assertEqual(events[0], ("size", 1640))
+        self.assertLess(events.index(("download", "whisper-gpu")), events.index(("step", "speaker")))
+
     def test_download_skips_a_verified_file_and_reports_ready(self):
         import hashlib
         import setup_assets

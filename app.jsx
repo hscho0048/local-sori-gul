@@ -536,32 +536,87 @@ const JobPill = ({ job, queued }) => {
 };
 
 // First run: the models aren't on disk yet. Shows the setup job's per-file progress from GET /job.
+// First-run setup, in user terms: three groups (the backend's ("step", …) events) instead of file paths, one progress
+// bar for whatever is downloading now, and the raw error only behind 자세히.
+const SETUP_STEPS = [
+  ['speech', '음성 인식 모델', '한국어를 받아쓰는 인공지능 모델'],
+  ['speaker', '화자 구분 모델', '누가 말했는지 나누는 모델'],
+  ['audio', '오디오 변환 도구', '여러 형식의 오디오 파일을 읽는 도구'],
+];
+const formatMib = (mib) => (mib >= 1024 ? `${(mib / 1024).toFixed(1)} GB` : `${Math.round(mib)} MB`);
+const CheckGlyph = () => (
+  <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+    <path d="M2.5 6.2l2.3 2.3 4.7-4.9" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 const SetupScreen = ({ job, error, onRetry }) => {
   const mine = job.op === 'setup';
-  const failed = mine && job.state === 'error';
-  const progress = (mine && job.progress) || [];
+  const running = mine && job.state === 'running';
+  const failed = (mine && job.state === 'error') || Boolean(error);
+  const current = mine ? SETUP_STEPS.findIndex(([key]) => key === job.step) : -1;
+  const downloading = running && job.file && !(job.ready || []).includes(job.file) && (job.progress || []).length === 3;
+  const [, doneMib, totalMib] = downloading ? job.progress : [];
+  const stateOf = (index) => {
+    if (mine && job.state === 'done' && !error) return 'done';
+    if (current < 0 || index > current) return 'pending';
+    if (index < current) return 'done';
+    return failed ? 'failed' : running ? 'active' : 'pending';
+  };
   return (
     <div className="setup-screen">
       <div className="setup-drag" data-tauri-drag-region />
-      <div className="setup-card" role="status" aria-live="polite">
-        <h1 className="setup-title">모델을 내려받는 중… (약 4.5 GB, 처음 한 번)</h1>
-        <p className="modal-hint">모델은 이 PC에만 저장되며, 이후 전사는 인터넷 없이 동작합니다. 중간에 닫아도 다음 실행 때 이어서 받습니다.</p>
-        <ul className="setup-files">
-          {(mine && job.ready ? job.ready : []).map((name) => <li key={name} className="setup-file setup-done">✓ {name}</li>)}
-          {mine && job.state === 'running' && job.file && !(job.ready || []).includes(job.file) && (
-            <li className="setup-file">
-              <span className="setup-name">{job.file}</span>
-              <progress max="100" value={job.percent || 0} />
-              <span className="setup-size">{progress.length ? `${progress[1]} / ${progress[2]} MiB` : ''}</span>
-            </li>
-          )}
-        </ul>
-        {mine && job.state === 'running' && <div className="job-status"><span className="job-stage">{job.stage}</span></div>}
-        {failed && <div className="modal-error">{job.error}</div>}
-        {error && <div className="modal-error">{error}</div>}
+      <div className="setup-card">
+        <img className="setup-icon" src="icon.png" alt="" />
+        <h1 className="setup-title">{failed ? '준비를 마치지 못했어요' : '소리글을 준비하고 있어요'}</h1>
+        <p className="setup-lead">
+          처음 한 번만 받아쓰기에 필요한 모델을 내려받아요{mine && job.size ? ` (약 ${formatMib(job.size)})` : ''}.
+          모델은 이 PC에만 저장되고, 그다음부터는 인터넷 없이 받아쓸 수 있어요.
+        </p>
+        <ol className="setup-steps" aria-live="polite">
+          {SETUP_STEPS.map(([key, label, hint], index) => {
+            const state = stateOf(index);
+            return (
+              <li key={key} className={`setup-step is-${state}`}>
+                <span className="setup-mark" aria-hidden="true">{state === 'done' ? <CheckGlyph /> : state === 'failed' ? '!' : index + 1}</span>
+                <div className="setup-step-body">
+                  <div className="setup-step-label">
+                    {label}
+                    <span className="sr-only">{{ done: ' 완료', active: ' 진행 중', failed: ' 실패', pending: ' 대기' }[state]}</span>
+                  </div>
+                  {state === 'active' ? (
+                    <React.Fragment>
+                      <div className={`setup-bar${downloading ? '' : ' is-busy'}`} role="progressbar" aria-label={label}
+                        aria-valuemin={0} aria-valuemax={100} aria-valuenow={downloading ? job.percent : undefined}>
+                        <div className="setup-bar-fill" style={downloading ? { width: `${job.percent}%` } : undefined} />
+                      </div>
+                      <div className="setup-step-hint">
+                        {downloading ? `${formatMib(doneMib)} / ${formatMib(totalMib)}`
+                          : /변환/.test(job.stage || '') ? '이 PC에 맞게 모델을 준비하는 중…' : '받아 둔 파일을 확인하는 중…'}
+                      </div>
+                    </React.Fragment>
+                  ) : (
+                    <div className="setup-step-hint">{hint}</div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+        {failed && (
+          <div className="setup-error" role="alert">
+            <p>인터넷 연결을 확인한 뒤 다시 시도해 주세요. 받던 파일은 이어서 받아요.</p>
+            <details>
+              <summary>자세히</summary>
+              <pre>{[mine && job.error, error].filter(Boolean).join('\n')}</pre>
+            </details>
+          </div>
+        )}
         {/* an ended setup job while this screen is still up means the models are still incomplete */}
-        {!(mine && job.state === 'running') && (
-          <button className="btn btn-primary" onClick={onRetry}>{mine || error ? '다시 시도' : '내려받기 시작'}</button>
+        {running ? (
+          <p className="setup-foot">창을 닫아도 괜찮아요. 다음에 열면 이어서 받아요.</p>
+        ) : (
+          <button className="btn btn-primary setup-action" onClick={onRetry}>{mine || error ? '다시 시도' : '내려받기 시작'}</button>
         )}
       </div>
     </div>

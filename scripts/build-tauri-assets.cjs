@@ -10,6 +10,7 @@ fs.rmSync(dist, { recursive: true, force: true });
 fs.mkdirSync(path.join(dist, 'vendor'), { recursive: true });
 for (const file of ['tokens.css', 'bridge.js']) fs.copyFileSync(path.join(root, file), path.join(dist, file));
 fs.cpSync(path.join(root, 'A2Z'), path.join(dist, 'A2Z'), { recursive: true });
+fs.copyFileSync(path.join(root, 'src-tauri', 'icons', 'icon.png'), path.join(dist, 'icon.png'));  // first-run screen
 for (const [pkg, file] of [['react', 'react.production.min.js'], ['react-dom', 'react-dom.production.min.js']]) {
   fs.copyFileSync(path.join(root, 'node_modules', pkg, 'umd', file), path.join(dist, 'vendor', file));
   fs.copyFileSync(path.join(root, 'node_modules', pkg, 'LICENSE'), path.join(dist, 'vendor', `LICENSE.${pkg}.txt`));

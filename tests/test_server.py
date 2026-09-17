@@ -194,3 +194,6 @@ class ServerTests(unittest.TestCase):
         emit("ready", "models/a.bin")
         self.assertEqual((server.JOB["file"], server.JOB["percent"], server.JOB["progress"], server.JOB["ready"]),
                          ("models/a.bin", 40, [40, 4, 10], ["models/a.bin"]))
+        emit("size", 3480)
+        emit("step", "speaker")
+        self.assertEqual((server.JOB["size"], server.JOB["step"]), (3480, "speaker"))

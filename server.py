@@ -127,8 +127,9 @@ def start_job(operation, payload, note_id):
         JOB_CANCEL = threading.Event()
         finished = ""
         JOB = {"state": "running", "op": operation, "note_id": note_id, "stage": "준비 중", "text": "", "percent": 0,
-               "error": None, "file": "", "ready": [], "progress": []}  # new dict, not JOB.clear()+update(), so a
-               # concurrent GET /job (reading the JOB global with no lock) never observes {}
+               "error": None, "file": "", "ready": [], "progress": [], "step": "", "size": 0}
+        # a new dict, not JOB.clear()+update(), so a concurrent GET /job (reading the JOB global with no lock)
+        # never observes {}
     WORKER = threading.Thread(target=run, args=(operation, payload, note_id, JOB_CANCEL), daemon=True)
     WORKER.start()
 
@@ -151,6 +152,8 @@ def job_emitter(operation, note_id):
             JOB["stage"] = f"{value} 내려받는 중"
         elif kind == "ready":
             JOB["ready"] = JOB.get("ready", []) + [value]
+        elif kind in ("step", "size"):  # setup: current group (speech / speaker / audio) and total download MiB
+            JOB[kind] = value
         elif kind == "text":
             finished = value
             JOB["text"] = value
