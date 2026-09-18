@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import time
 
-ROOT = Path(os.environ.get("SORIGUL_HOME") or Path(__file__).resolve().parent)
+ROOT = Path(os.environ.get("SORIGUL_HOME") or Path(__file__).resolve().parent.parent)  # the app sets SORIGUL_HOME; dev: repo root
 LIBRARY = ROOT / "library"
 DB = LIBRARY / "notes.db"
 SETUP_LOCK = threading.Lock()

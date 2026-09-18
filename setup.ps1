@@ -19,15 +19,15 @@ function Ensure-Venv($name, $requirements) {
 }
 
 if ($x64) {
-    Ensure-Venv '.venv' 'requirements-x64.txt'
+    Ensure-Venv '.venv' 'backend\requirements-x64.txt'
     $gpuPython = '.\.venv\Scripts\python.exe'
 } else {
-    Ensure-Venv '.venv' 'requirements-arm64.txt'
-    Ensure-Venv '.venv-whisper-gpu' 'requirements-whisper-gpu.txt'
+    Ensure-Venv '.venv' 'backend\requirements-arm64.txt'
+    Ensure-Venv '.venv-whisper-gpu' 'backend\requirements-whisper-gpu.txt'
     $gpuPython = '.\.venv-whisper-gpu\Scripts\python.exe'
 }
-& .\.venv\Scripts\python.exe setup_assets.py
+& .\.venv\Scripts\python.exe backend\setup_assets.py
 if ($LASTEXITCODE -ne 0) { throw 'Asset download failed. Run setup again to retry.' }
-& $gpuPython setup_assets.py --whisper-gpu
+& $gpuPython backend\setup_assets.py --whisper-gpu
 if ($LASTEXITCODE -ne 0) { throw 'GPU asset setup failed. Run setup again to retry.' }
 Write-Host 'Ready. Run: npm install; npm run tauri:dev'

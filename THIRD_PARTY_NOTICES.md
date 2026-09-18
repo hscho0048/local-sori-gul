@@ -25,7 +25,7 @@ distributed with 소리글.
 | Qualcomm AI Engine Direct (QNN) libraries inside `onnxruntime-qnn` (ARM64 only) | Qualcomm AI Stack License (redistribution as part of an application, object code only) | `python/Lib/site-packages/onnxruntime/Qualcomm AI Hub Proprietary License.pdf`, `python/Lib/gpu-packages/onnxruntime_qnn/Qualcomm_LICENSE.pdf` |
 | ONNX Runtime and its dependencies | MIT, see its notices | `python/Lib/*/onnxruntime/ThirdPartyNotices.txt` |
 | OpenVINO runtime and its dependencies (x64 only) | Apache-2.0, see its third-party programs | `python/Lib/site-packages/openvino-*.dist-info/` |
-| 에이투지체 (A2Z) font, © 2026 PT&, Lee Juim; Latin glyphs from Outfit | SIL Open Font License 1.1 | `A2Z/OFL.txt` (in this repository and the app's assets) |
+| 에이투지체 (A2Z) font, © 2026 PT&, Lee Juim; Latin glyphs from Outfit | SIL Open Font License 1.1 | `frontend/A2Z/OFL.txt` in this repository, `A2Z/OFL.txt` in the app's assets |
 | React, React DOM 18.3.1 | MIT | `vendor/LICENSE.react.txt`, `vendor/LICENSE.react-dom.txt` (app assets) |
 | WebView2 | Microsoft; the installer downloads Microsoft's bootstrapper when WebView2 is missing | — |
 

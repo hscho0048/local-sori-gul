@@ -9,6 +9,7 @@ $cache = Join-Path $root "src-tauri\target\python-cache"
 $version = '3.12.10'
 $platform = @{ arm64 = 'win_arm64'; x64 = 'win_amd64' }[$Arch]
 $embed = @{ arm64 = 'arm64'; x64 = 'amd64' }[$Arch]
+$backend = Join-Path $root 'backend'
 $hostPython = Join-Path $root '.venv\Scripts\python.exe'
 if (-not (Test-Path $hostPython)) { throw 'Run setup.cmd first (the build uses .venv''s pip).' }
 # ffmpeg is not bundled (its Windows build is GPL): the app's first-run setup downloads it with the models.
@@ -30,9 +31,9 @@ function Add-Packages([string]$requirements, [string]$target) {
     $name = [IO.Path]::GetFileNameWithoutExtension($requirements)
     $wheels = Join-Path $cache "wheels-$Arch-$name"
     $common = @('--only-binary=:all:', '--platform', $platform, '--python-version', '3.12', '--implementation', 'cp')
-    & $hostPython -m pip download @common -r (Join-Path $root $requirements) -d $wheels --quiet --disable-pip-version-check
+    & $hostPython -m pip download @common -r (Join-Path $backend $requirements) -d $wheels --quiet --disable-pip-version-check
     if ($LASTEXITCODE -ne 0) { throw "pip download failed for $requirements" }
-    & $hostPython -m pip install @common --no-index --find-links $wheels --target $target --no-compile --quiet --disable-pip-version-check -r (Join-Path $root $requirements)
+    & $hostPython -m pip install @common --no-index --find-links $wheels --target $target --no-compile --quiet --disable-pip-version-check -r (Join-Path $backend $requirements)
     if ($LASTEXITCODE -ne 0) { throw "pip install --target failed for $requirements" }
     Remove-Item -Recurse -Force (Join-Path $target 'bin') -ErrorAction SilentlyContinue
 }
@@ -40,7 +41,7 @@ Add-Packages "requirements-$Arch.txt" (Join-Path $out 'Lib\site-packages')
 if ($Arch -eq 'arm64') { Add-Packages 'requirements-whisper-gpu.txt' (Join-Path $out 'Lib\gpu-packages') }
 
 foreach ($file in 'server.py', 'engine.py', 'jobs.py', 'diarize.py', 'library.py', 'setup_assets.py', 'loopback.py') {
-    Copy-Item (Join-Path $root $file) $out
+    Copy-Item (Join-Path $backend $file) $out
 }
 
 # onnxruntime needs msvcp140 / vcruntime140_1; ship them app-locally instead of requiring the VC++ redistributable.

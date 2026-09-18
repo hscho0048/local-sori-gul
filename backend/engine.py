@@ -18,7 +18,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import numpy as np
 
 CODE = Path(__file__).resolve().parent
-ROOT = Path(os.environ.get("SORIGUL_HOME") or CODE)  # models/, tools/, diagnostics/ (installed app: %LOCALAPPDATA%\Sorigul)
+# models/, tools/, diagnostics/: %LOCALAPPDATA%\Sorigul in the installed app, the repo root in development
+ROOT = Path(os.environ.get("SORIGUL_HOME") or CODE.parent)
 RATE = 16000
 EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg", ".opus", ".wma", ".mp4"}
 

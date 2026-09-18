@@ -66,7 +66,8 @@ npm run tauri:dev    # dist\ 빌드 → src-tauri 디버그 빌드 → .venv의 
 ### 테스트
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests.test_engine tests.test_diarize tests.test_library tests.test_server
+cd backend
+..\.venv\Scripts\python.exe -m unittest tests.test_engine tests.test_diarize tests.test_library tests.test_server
 ```
 
 ### 설치 파일 만들기 (ARM64 PC에서 두 가지 모두)
@@ -87,24 +88,36 @@ npm run tauri:build:x64     # scripts\build-python-bundle.ps1 x64 후 x86_64 NSI
 
 ### 구조
 
+```
+frontend/     화면 (React UMD, 번들러 없음)
+backend/      Python 백엔드와 테스트 (표준 라이브러리 HTTP 브리지 + 모델 작업)
+src-tauri/    데스크톱 셸 (Rust, Tauri v2)
+scripts/      빌드 스크립트
+```
+
 | 파일 | 역할 |
 |---|---|
+| `frontend/app.jsx`, `bridge.js`, `tokens.css`, `index.html` | 화면. `npm run build`가 `dist/`로 만듭니다 |
+| `frontend/A2Z/` | 에이투지체 글꼴 |
+| `backend/server.py` | HTTP 브리지 (토큰 인증, 127.0.0.1 전용) |
+| `backend/jobs.py` | 작업마다 모델 프로세스 하나 실행 |
+| `backend/engine.py` | Whisper 추론 (QNN NPU/GPU, OpenVINO, CPU), 실시간 전사 |
+| `backend/diarize.py` | 화자 분리 |
+| `backend/loopback.py` | WASAPI 시스템 소리 캡처 (ctypes) |
+| `backend/library.py` | SQLite 받아쓰기 보관함 |
+| `backend/setup_assets.py` | 첫 실행 모델·ffmpeg 내려받기 |
+| `backend/requirements-*.txt` | Python 의존성 (ARM64 / x64 / ARM64 GPU) |
+| `backend/tests/` | 백엔드 단위 테스트 |
 | `src-tauri/src/main.rs` | 창·트레이·단축키, Python 브리지 프로세스 관리 |
-| `app.jsx`, `bridge.js`, `tokens.css`, `index.html` | 화면 (React UMD, 번들러 없음) |
-| `server.py` | 표준 라이브러리 HTTP 브리지 (토큰 인증, 127.0.0.1 전용) |
-| `jobs.py` | 작업마다 모델 프로세스 하나 실행 |
-| `engine.py` | Whisper 추론 (QNN NPU/GPU, OpenVINO, CPU), 실시간 전사 |
-| `diarize.py` | 화자 분리 |
-| `loopback.py` | WASAPI 시스템 소리 캡처 (ctypes) |
-| `library.py` | SQLite 받아쓰기 보관함 |
-| `setup_assets.py` | 첫 실행 모델·ffmpeg 내려받기 |
-| `setup.cmd`, `setup.ps1`, `requirements-*.txt` | 개발 환경(가상환경·모델) 준비 |
 | `scripts/` | 화면 빌드, 설치 파일용 Python 번들, 서드파티 고지 생성 |
-| `tests/` | 백엔드 단위 테스트 |
+| `setup.cmd`, `setup.ps1` | 개발 환경(가상환경·모델) 준비 |
+
+개발 중에는 가상환경(`.venv`)과 데이터(`models/`, `tools/`, `library/`)가 저장소 최상위에 생깁니다(모두 `.gitignore` 대상).
+설치된 앱은 데이터를 `%LOCALAPPDATA%\Sorigul`에 둡니다.
 
 ## 라이선스
 
 소리글은 [MIT 라이선스](LICENSE)로 배포합니다.
 설치 파일에 포함되거나 첫 실행 때 내려받는 서드파티 구성 요소의 라이선스는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있습니다.
-에이투지체(A2Z) 글꼴(화면에 쓰는 Regular·Medium·SemiBold·Bold 네 굵기만 포함)은 [SIL Open Font License 1.1](A2Z/OFL.txt)을 따릅니다.
+에이투지체(A2Z) 글꼴(화면에 쓰는 Regular·Medium·SemiBold·Bold 네 굵기만 포함)은 [SIL Open Font License 1.1](frontend/A2Z/OFL.txt)을 따릅니다.
 첫 실행 때 받는 ffmpeg는 GPL-3.0 빌드이며, 설치 파일에는 포함되지 않습니다.

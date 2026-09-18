@@ -8,7 +8,7 @@ import urllib.request
 import zipfile
 
 CODE = Path(__file__).resolve().parent
-ROOT = Path(os.environ.get("SORIGUL_HOME") or CODE)
+ROOT = Path(os.environ.get("SORIGUL_HOME") or CODE.parent)  # the app sets SORIGUL_HOME; dev: repo root
 
 # The interpreter's own architecture: an x64 build running under emulation on an ARM64 PC reports machine() == "ARM64".
 ARM64 = sysconfig.get_platform() == "win-arm64"

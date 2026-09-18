@@ -289,10 +289,11 @@ class LayoutTests(unittest.TestCase):
     def test_worker_python_uses_venvs_in_dev_and_package_dirs_in_the_bundle(self):
         import jobs
         with tempfile.TemporaryDirectory() as code, patch("jobs.CODE", Path(code)):
+            # dev: the venvs sit in the repo root, one level above backend/
             self.assertEqual(jobs.worker_python("transcribe", {"device": "gpu"}),
-                             (Path(code) / ".venv-whisper-gpu" / "Scripts" / "pythonw.exe", None))
+                             (Path(code).parent / ".venv-whisper-gpu" / "Scripts" / "pythonw.exe", None))
             self.assertEqual(jobs.worker_python("transcribe", {"device": "cpu"}),
-                             (Path(code) / ".venv" / "Scripts" / "pythonw.exe", None))
+                             (Path(code).parent / ".venv" / "Scripts" / "pythonw.exe", None))
             (Path(code) / "python312._pth").write_text("")
             self.assertEqual(jobs.worker_python("listen", {"device": "gpu"}),
                              (Path(code) / "pythonw.exe", Path(code) / "Lib" / "gpu-packages"))

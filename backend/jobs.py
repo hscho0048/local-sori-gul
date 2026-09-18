@@ -7,7 +7,7 @@ import sysconfig
 import time
 
 CODE = Path(__file__).resolve().parent
-ROOT = Path(os.environ.get("SORIGUL_HOME") or CODE)
+ROOT = Path(os.environ.get("SORIGUL_HOME") or CODE.parent)  # the app sets SORIGUL_HOME; dev: repo root
 RESULT_KIND = {"transcribe": "done", "listen": "done", "setup": "done"}
 
 # The interpreter's own architecture: an x64 build running under emulation on an ARM64 PC reports machine() == "ARM64".
@@ -22,11 +22,11 @@ def worker_environment(operation, payload):
 
 def worker_python(operation, payload):
     """(pythonw.exe, package dir). Installed app: the embeddable interpreter this file lives next to and one of its
-    two package dirs; dev: a venv, which finds its own site-packages (package dir None)."""
+    two package dirs; dev: a venv in the repo root, which finds its own site-packages (package dir None)."""
     venv = worker_environment(operation, payload)
     if (CODE / "python312._pth").is_file():
         return CODE / "pythonw.exe", CODE / "Lib" / ("gpu-packages" if venv == ".venv-whisper-gpu" else "site-packages")
-    return CODE / venv / "Scripts" / "pythonw.exe", None
+    return CODE.parent / venv / "Scripts" / "pythonw.exe", None  # dev venvs live in the repo root
 
 
 def model_worker(connection, cancelled, operation, payload, finish=None, packages=None):

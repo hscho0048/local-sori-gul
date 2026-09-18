@@ -94,13 +94,13 @@ fn focus_running_instance() {
     }
 }
 
-/// (pythonw.exe, working dir with server.py, SORIGUL_HOME). Debug: the repo's .venv and data, so dev data keeps
-/// working. Release: the embeddable Python bundled as the `python` resource (resource dir = the exe's dir on
+/// (pythonw.exe, working dir with server.py, SORIGUL_HOME). Debug: the repo's .venv, backend/ and data, so dev data
+/// keeps working. Release: the embeddable Python bundled as the `python` resource (resource dir = the exe's dir on
 /// Windows) and %LOCALAPPDATA%\Sorigul for models, library and the model lock.
 fn bridge_paths() -> (PathBuf, PathBuf, PathBuf) {
     if cfg!(debug_assertions) {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
-        (root.join(".venv").join("Scripts").join("pythonw.exe"), root.clone(), root)
+        (root.join(".venv").join("Scripts").join("pythonw.exe"), root.join("backend"), root)
     } else {
         let python = std::env::current_exe().expect("no exe path").parent().unwrap().join("python");
         let home = PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA is not set")).join("Sorigul");

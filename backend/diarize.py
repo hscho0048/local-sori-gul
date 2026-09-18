@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(os.environ.get("SORIGUL_HOME") or Path(__file__).resolve().parent)
+ROOT = Path(os.environ.get("SORIGUL_HOME") or Path(__file__).resolve().parent.parent)  # the app sets SORIGUL_HOME; dev: repo root
 MODEL_DIR = ROOT / "models" / "speaker"
 MODEL_FILE = "wespeaker_en_voxceleb_resnet34_LM.onnx"
 RATE = 16000
